@@ -114,6 +114,15 @@ export class SkyAtmosphereMesh extends Mesh {
 		this.sunIntensity = uniform( 20.0 );
 
 		/**
+		 * Camera viewHeight (km, planet-centred). Drives the SkyView LUT UV
+		 * un-map AND the ground-intersect ray origin. Defaults to ground+ε;
+		 * the baker's `setCamera()` updates this each frame for phase 2.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.viewHeight = uniform( atmosphereUniforms.bottomRadius.value + 0.01 );
+
+		/**
 		 * Global luminance multiplier applied to the Sky-View LUT sample.
 		 *
 		 * The LUTs are computed with Hillaire's `ILLUMINANCE_IS_ONE` convention
@@ -167,6 +176,7 @@ export class SkyAtmosphereMesh extends Mesh {
 		const showSunDiscU = this.showSunDisc;
 		const sunIntensityU = this.sunIntensity;
 		const luminanceScaleU = this.luminanceScale;
+		const viewHeightU = this.viewHeight;
 
 		return Fn( () => {
 
@@ -175,10 +185,10 @@ export class SkyAtmosphereMesh extends Mesh {
 			const upVec = normalize( upU );
 			const sunDir = normalize( sunDirU );
 
-			// Camera height: ground-based for phase 1b (matches the Sky-View LUT's
-			// assumption that `viewHeight = bottomRadius + ε`). A tiny epsilon keeps
-			// the ground-intersection test well-defined.
-			const viewHeight = params.bottomRadius.add( float( 0.01 ) );
+			// Camera viewHeight (km, distance from planet centre) — driven by the
+			// per-frame uniform. Clamp to never fall below `bottomRadius + ε` so
+			// the ground-intersect math stays well-defined.
+			const viewHeight = max( viewHeightU, params.bottomRadius.add( float( 0.01 ) ) );
 
 			// View-zenith cosine.
 			const viewZenithCosAngle = clamp( dot( viewDir, upVec ), float( - 1.0 ), float( 1.0 ) );

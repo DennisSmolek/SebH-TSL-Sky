@@ -87,6 +87,15 @@ export class SkyViewLUT {
 			: new Vector3( 0.0, 0.0, 1.0 );
 		this._sunDirectionUniform = uniform( initialSun );
 
+		/**
+		 * Camera viewHeight (km, planet-centred — i.e. distance from planet
+		 * centre to the camera). Default = ground+ε. Phase 2 callers update
+		 * this every frame so the LUT reflects the actual camera altitude.
+		 */
+		this._viewHeightUniform = uniform(
+			atmosphereUniforms.bottomRadius.value + 0.01
+		);
+
 		this.renderTarget = new RenderTarget( resolution.width, resolution.height, {
 			type: HalfFloatType,
 			minFilter: LinearFilter,
@@ -126,22 +135,37 @@ export class SkyViewLUT {
 
 	}
 
+	/** Planet-centred camera height in km. Setter for phase 2 per-frame updates. */
+	get viewHeight() {
+
+		return this._viewHeightUniform.value;
+
+	}
+
+	set viewHeight( km ) {
+
+		this._viewHeightUniform.value = km;
+
+	}
+
 	_buildColorNode() {
 
 		const params = this.atmosphereUniforms;
 		const transmittanceTex = this.transmittanceLUT.texture;
 		const multiScatterTex = this.multiScatterLUT.texture;
 		const sunDirU = this._sunDirectionUniform;
+		const viewHeightU = this._viewHeightUniform;
 
 		return Fn( () => {
 
 			const lutUv = uv();
 
-			// Phase 1b: camera sits at the planet surface. HLSL:589 sets
-			//   WorldPos = camera + float3(0,0,BottomRadius)
-			// and uses the camera's height; we hard-code to bottomRadius + ε.
-			// The ε keeps the first-step ground-intersection math well-defined.
-			const viewHeight = params.bottomRadius.add( float( 0.01 ) );
+			// Camera viewHeight (km, distance from planet centre). Driven by
+			// the per-frame uniform — caller writes via `setCamera()` upstream.
+			// Clamp to never go below `bottomRadius + ε` so the ground-intersect
+			// math stays well-defined even if the caller hands us something
+			// physically below the planet surface.
+			const viewHeight = max( viewHeightU, params.bottomRadius.add( float( 0.01 ) ) );
 
 			// Un-map UV → view angles using the Hillaire horizon-packed scheme.
 			const { viewZenithCosAngle, lightViewCosAngle } = uvToSkyViewLutParams( params, viewHeight, lutUv );

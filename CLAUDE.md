@@ -68,6 +68,134 @@ appears tilted on the mirror sphere, this is the first place to look.**
    bitpatterns**, not floats — decode by hand if you need the actual value
    (`exp = bits[14:10] - 15; mantissa_frac = bits[9:0]/1024; value = (1 + mantissa_frac) * 2^exp`)
 
+### Force `.level(0)` when sampling a 3D LUT through a depth-aware post-process
+
+When the AP LUT (or any 3D texture whose UVW depends on scene depth) is
+sampled in a post-process, you'll see **a 1-pixel dark outline tracing
+every silhouette** in the output. Cause: WebGPU's default `textureSample`
+uses screen-space derivatives (`ddx`/`ddy`) for mip-level selection. At
+a silhouette, the W coordinate jumps from surface-depth to far-plane-w
+across one pixel → derivatives explode → GPU picks an extreme "mip"
+level and returns a garbage averaged value. This shows up identically
+in the AP RGB even before any compositing happens.
+
+**Fix:** force level-0 sampling explicitly:
+```js
+const ap = texture3D( apTex, vec3( u, w ) ).level( 0 );
+```
+
+Bisecting this took multiple wrong turns (MSAA, ray-distance metric,
+coverage limits) before adding `?debug=ap-rgb` showed the dark outline
+appearing in the raw LUT sample, before compositing — at which point
+the derivatives explanation was the only fit. **For any post-process
+sampling a texture with depth-dependent UVs, default to `.level(0)`.**
+
+### AP haze sampling — distance-along-ray, not |viewZ|
+
+The AP LUT is BUILT integrating each voxel's ray for `tMax` km **along
+the ray direction**. The post-process must therefore sample using
+**distance-along-ray**, NOT `|viewZ|` (the view-space Z component).
+Using `|viewZ|` underestimates ray length at off-axis pixels by
+`1/cos(angle from view axis)` — up to ~14% at the corners of a 60° FOV.
+
+**Symptom:** dark fringe along distant geometry silhouettes that gets
+WORSE when the camera pitches up/down. At one specific orientation
+(rays nearly aligned with view axis at the silhouette) the fringe
+disappears, then comes back at other rotations. This is the easiest
+test: if rotation changes the fringe, you have a distance-metric bug.
+
+**Fix:** reconstruct per-pixel ray direction from the inverse projection
+matrix and divide:
+```js
+const ndc2 = vec2(uv.x*2-1, uv.y*2-1);
+const clipFar = vec4(ndc2, 1, 1);
+const rayDirView = (invProj * clipFar).xyz / w;
+const cosFromAxis = abs(rayDirView.normalize().z);
+const distAlongRayM = abs(viewZ) / cosFromAxis;
+```
+
+### AP underground-froxel correction (the real fix for the horizon cliff)
+
+SebH's `RenderCameraVolumePS` (RenderSkyRayMarching.hlsl ~668-680) does
+something the obvious port skips: when a froxel's endpoint falls below
+the planet surface, push it back up onto the ground shell, recompute
+`worldDir`, and recompute `tMax`. **Without this**, voxels that point
+behind the horizon integrate through *invalid medium* (rock), producing
+a hard alpha cliff at the horizon and a visible black band in
+`?debug=ap-alpha`.
+
+**Fix in `AerialPerspectiveLUT.js`:**
+```js
+const newWorldPos = camPosKm.add(worldDir * tMax);
+const belowGround = length(newWorldPos) <= bottomR + PLANET_RADIUS_OFFSET;
+const groundedPos = normalize(newWorldPos) * (bottomR + PLANET_RADIUS_OFFSET + 0.001);
+worldDir.assign(select(belowGround, normalize(groundedPos - camPosKm), worldDir));
+tMax.assign(select(belowGround, length(groundedPos - camPosKm), tMax));
+```
+Then pass the corrected `worldDir` and `tMax` into both
+`moveToTopAtmosphere` and `integrateScatteredLuminance`. With this
+applied, the AP / Sky-View boundary matches well enough that the
+sky-fallback blend below becomes unnecessary in canonical mode.
+
+### AP coverage limit vs sky integration — sky-fallback blend (legacy / opt-in)
+
+Historical context: before the underground-froxel correction was ported,
+the AP LUT under-covered grazing rays (coverage cap at 256 km vs the
+Sky-View LUT's full-atmosphere integration on grazing rays), producing a
+sharp horizon line where AP-affected geometry met the cube background.
+
+A workaround was added in `HazePostProcess.js`: when `skyCube` is
+supplied, the post-process samples the cube background at the fragment's
+world ray direction and blends the composite toward it weighted by
+`apA`:
+```js
+composited = mix(composited, skyAtDirection, apA);
+```
+This closes any residual AP/Sky-View mismatch by leaning on the cube as
+"the sky behind this surface."
+
+**Status:** opt-in only. The canonical SebH-aligned path drops `skyCube`
+from the `createHazeOutputNode` arg bag. The shim is retained for
+skybox-only callers who can't afford a per-frame AP rebuild and need
+flat-ground horizon to colour-match the cube without the underground-
+froxel fix.
+
+If you wire the shim, use `baker.texture` (raw cube), not
+`environmentTexture` (PMREM-filtered) — the latter over-blurs.
+
+### Dark silhouette fringe at AP / sky boundaries — surface lighting, not MSAA
+
+A dark fringe appears along distant geometry silhouettes when the AP
+haze post-process is on, and disappears with the post-process off. This
+looked like an MSAA / depth-mismatch problem at first (we initially
+disabled `antialias: true` on this hypothesis) but **it's actually a
+fundamental mismatch between two different integrations**:
+
+- AP LUT integrates atmospheric scattering over the **camera-to-surface
+  finite path** (e.g. 30 km).
+- The Sky-View LUT (and thus the cube background) integrates over the
+  **camera-to-infinity full atmosphere**.
+
+At a silhouette pixel the surface side computes
+`surfaceColor × T_30km + L_inscatter_30km`, while the adjacent sky pixel
+computes the full sky integral. With unlit dark surfaces (low albedo,
+IBL-only), `surfaceColor × T_30km` is far below the sky brightness, so
+the surface side reads as a darker fringe — physically correct but
+visually wrong unless something brings the surface color up to
+sky-comparable luminance.
+
+**Fix: directly illuminate the surfaces** — typically a
+`DirectionalLight` matching the sun direction, with intensity tuned for
+the renderer's exposure × the sky `luminanceScale`. With direct sun
+illumination the lit-face brightness sits in the same range as the sky
+behind it and the fringe vanishes naturally. This matches real-world
+photography of distant peaks.
+
+(Original MSAA hypothesis kept here for posterity: MSAA + a
+post-process that reads single-sample depth *can* produce edge
+artifacts, but it wasn't this case. If you re-enable MSAA, you may
+still want FXAA after the haze composite to avoid that distinct issue.)
+
 ### Vite HMR + WebGPU shader edits
 
 Editing a TSL helper while a page is open often leaves the previous shader

@@ -489,6 +489,14 @@ export const getSphericalDir = /*@__PURE__*/ Fn( ( [ iPlusHalf, jPlusHalf, sqrtS
  *        branch in `RenderSkyRayMarching.hlsl:187-197`). When omitted, the
  *        MS-LUT-independent build is used — preserves the Transmittance/MS LUT
  *        callers' existing behaviour.
+ * @param {THREE.Node} [args.tMaxOverride] optional float TSL node. When
+ *        provided, the integrator marches *exactly* this distance instead of
+ *        clipping to the ground/atmosphere boundary. Used by the Aerial
+ *        Perspective LUT (each voxel marches a fixed depth-slice). Mirrors
+ *        the `tMaxMax` parameter on Unreal's
+ *        `IntegrateScatteredLuminance(..., tMaxMax)` overload at HLSL line 711.
+ *        We still clip against the ground/top to avoid marching into rock or
+ *        empty space — `tMax = min(tMaxOverride, sphere-clipped tMax)`.
  */
 export function integrateScatteredLuminance( {
 	worldPos,
@@ -499,7 +507,8 @@ export function integrateScatteredLuminance( {
 	sampleCount = 20,
 	ground = true,
 	mieRayPhase = false,
-	multiScatterLUT = null
+	multiScatterLUT = null,
+	tMaxOverride = null
 } ) {
 
 	const earthO = vec3( 0.0, 0.0, 0.0 );
@@ -511,7 +520,8 @@ export function integrateScatteredLuminance( {
 
 	const tMaxIfNoBottom = tTop.lessThan( 0.0 ).select( float( 0.0 ), tTop );
 	const tMaxIfBoth = tTop.greaterThan( 0.0 ).select( tTop.min( tBottom ), tBottom );
-	const tMax = tBottom.lessThan( 0.0 ).select( tMaxIfNoBottom, tMaxIfBoth ).toVar();
+	const tMaxClipped = tBottom.lessThan( 0.0 ).select( tMaxIfNoBottom, tMaxIfBoth );
+	const tMax = ( tMaxOverride ? min( tMaxClipped, tMaxOverride ) : tMaxClipped ).toVar();
 
 	// ---- phase functions (constant per ray) ----
 	const uniformPhase = float( 1.0 ).div( float( 4.0 ).mul( PI ) );

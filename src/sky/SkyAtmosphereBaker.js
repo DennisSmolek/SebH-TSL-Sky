@@ -16,6 +16,7 @@ import { LUT_RESOLUTIONS } from './luts/resolutions.js';
 import { TransmittanceLUT } from './luts/TransmittanceLUT.js';
 import { MultiScatterLUT } from './luts/MultiScatterLUT.js';
 import { SkyViewLUT } from './luts/SkyViewLUT.js';
+import { AerialPerspectiveLUT } from './luts/AerialPerspectiveLUT.js';
 import { SkyAtmosphereMesh } from './SkyAtmosphereMesh.js';
 
 /**
@@ -41,10 +42,20 @@ import { SkyAtmosphereMesh } from './SkyAtmosphereMesh.js';
  *   atmosDirty  → Transmittance + MultiScatter + SkyView + cube + PMREM
  *   sunDirty    → SkyView + cube + PMREM          (T and MS do not depend on sun)
  *   cubeDirty   → cube + PMREM                    (e.g. markCubeDirty after direct mutation)
+ *   cameraDirty → SkyView + AP                    (camera moved; only LUTs that read
+ *                                                  viewHeight / camera matrices refresh)
+ *
+ * Phase 2 additions:
+ *   - `setCamera(camera)`: feeds the main camera's height into SkyView LUT and
+ *     mesh, and matrices into the AP LUT.
+ *   - `updateAerialPerspective()`: renders just the AP LUT (per-frame), since
+ *     it depends on camera position/orientation that change every frame.
+ *   - `aerialPerspectiveTexture`: 3D texture consumers (the haze post-process)
+ *     read to apply atmospheric haze on opaque scene geometry.
  */
 export class SkyAtmosphereBaker {
 
-	constructor( renderer, { cubeSize = 256, atmosphere, lutResolutions } = {} ) {
+	constructor( renderer, { cubeSize = 256, atmosphere, lutResolutions, enableAerialPerspective = true } = {} ) {
 
 		this.renderer = renderer;
 		this.cubeSize = cubeSize;
@@ -72,6 +83,21 @@ export class SkyAtmosphereBaker {
 			transmittanceLUT: this.transmittanceLUT,
 			multiScatterLUT: this.multiScatterLUT
 		} );
+
+		// --- aerial perspective LUT (phase 2; optional — caller may opt out) ---
+		if ( enableAerialPerspective ) {
+
+			this.aerialPerspectiveLUT = new AerialPerspectiveLUT( renderer, {
+				atmosphereUniforms: this.atmosphereUniforms,
+				transmittanceLUT: this.transmittanceLUT,
+				multiScatterLUT: this.multiScatterLUT
+			} );
+
+		} else {
+
+			this.aerialPerspectiveLUT = null;
+
+		}
 
 		// --- sky scene + Hillaire mesh ---
 		this.skyScene = new Scene();
@@ -104,9 +130,14 @@ export class SkyAtmosphereBaker {
 		this.sunDirty = true;
 		this.atmosDirty = true;
 		this.cubeDirty = true;
+		this.cameraDirty = true;
 
 		// Y-up world-space sun vector; assigned on setSun().
 		this._sunVec = new Vector3( 0.0, 1.0, 0.0 );
+
+		// Camera handle, set by setCamera(). Used to refresh per-frame uniforms
+		// (viewHeight on SkyView/mesh; matrices on AP LUT).
+		this._camera = null;
 
 	}
 
@@ -119,6 +150,48 @@ export class SkyAtmosphereBaker {
 	get environmentTexture() {
 
 		return this._pmremTarget ? this._pmremTarget.texture : null;
+
+	}
+
+	/** 3D Aerial Perspective LUT texture (phase 2). `null` if AP was disabled. */
+	get aerialPerspectiveTexture() {
+
+		return this.aerialPerspectiveLUT ? this.aerialPerspectiveLUT.texture : null;
+
+	}
+
+	/**
+	 * Phase 2: bind the main scene camera. Updates viewHeight on the
+	 * Sky-View LUT and mesh (so altitude is reflected in the sky), and
+	 * matrices on the AP LUT (so haze depth volume is camera-aligned).
+	 *
+	 * Should be called every frame the camera moves. Sets `cameraDirty` so
+	 * the next `update()` refreshes Sky-View. The AP LUT is updated by the
+	 * separate `updateAerialPerspective()` since it needs to fire every frame
+	 * regardless of any flags.
+	 */
+	setCamera( camera ) {
+
+		this._camera = camera;
+		camera.updateMatrixWorld();
+
+		// Atmosphere-frame camera height: planet centre to camera (Y-up world,
+		// converting from m to km). Horizontal position is ignored — at
+		// ground-level scales the planet curvature isn't perceptible.
+		const camYm = camera.position.y;
+		const bottomR = this.atmosphereUniforms.bottomRadius.value;
+		const viewHeightKm = bottomR + camYm * 0.001;
+
+		this.skyViewLUT.viewHeight = viewHeightKm;
+		this.sky.viewHeight.value = viewHeightKm;
+
+		if ( this.aerialPerspectiveLUT ) {
+
+			this.aerialPerspectiveLUT.setCamera( camera );
+
+		}
+
+		this.cameraDirty = true;
 
 	}
 
@@ -152,6 +225,14 @@ export class SkyAtmosphereBaker {
 		const sinE = Math.sin( elevRad );
 		this.skyViewLUT.sunDirection = new Vector3( cosE, 0.0, sinE );
 
+		// AP LUT consumes the Y-up world sun directly (matches the integrator's
+		// frame-invariant scalar-only consumption).
+		if ( this.aerialPerspectiveLUT ) {
+
+			this.aerialPerspectiveLUT.setSunDirection( this._sunVec );
+
+		}
+
 		this.sunDirty = true;
 		this.cubeDirty = true;
 
@@ -183,7 +264,8 @@ export class SkyAtmosphereBaker {
 	 */
 	update() {
 
-		if ( ! this.cubeDirty && ! this.sunDirty && ! this.atmosDirty ) return;
+		const skyDirty = this.atmosDirty || this.sunDirty || this.cameraDirty;
+		if ( ! this.cubeDirty && ! skyDirty ) return;
 
 		// 1. LUTs
 		if ( this.atmosDirty ) {
@@ -192,30 +274,52 @@ export class SkyAtmosphereBaker {
 			this.multiScatterLUT.render();
 			this.skyViewLUT.render();
 
-		} else if ( this.sunDirty ) {
+		} else if ( this.sunDirty || this.cameraDirty ) {
 
-			// T and MS are sun-independent; only SkyView needs a refresh.
+			// T and MS are sun-/camera-independent; only SkyView needs a refresh.
 			this.skyViewLUT.render();
 
 		}
 
 		// 2. Cube bake — sun disc OFF to keep PMREM clean (see PLAN.md risk #3).
-		const prevShowSunDisc = this.sky.showSunDisc.value;
-		this.sky.showSunDisc.value = 0;
+		// Skip the cube re-bake if only camera moved without other state change
+		// (the IBL doesn't care about main-camera position).
+		const skyContentChanged = this.atmosDirty || this.sunDirty || this.cubeDirty;
+		if ( skyContentChanged ) {
 
-		this.cubeCamera.update( this.renderer, this.skyScene );
+			const prevShowSunDisc = this.sky.showSunDisc.value;
+			this.sky.showSunDisc.value = 0;
 
-		this.sky.showSunDisc.value = prevShowSunDisc;
+			this.cubeCamera.update( this.renderer, this.skyScene );
 
-		// 3. PMREM. WebGPU PMREMGenerator exposes `fromCubemap( texture )` (not the
-		// WebGL-style `fromCubeRenderTarget`). It allocates a new RT each call, so
-		// dispose the previous one first.
-		if ( this._pmremTarget ) this._pmremTarget.dispose();
-		this._pmremTarget = this.pmremGenerator.fromCubemap( this.cubeRenderTarget.texture );
+			this.sky.showSunDisc.value = prevShowSunDisc;
+
+			// 3. PMREM. WebGPU PMREMGenerator exposes `fromCubemap( texture )` (not the
+			// WebGL-style `fromCubeRenderTarget`). It allocates a new RT each call, so
+			// dispose the previous one first.
+			if ( this._pmremTarget ) this._pmremTarget.dispose();
+			this._pmremTarget = this.pmremGenerator.fromCubemap( this.cubeRenderTarget.texture );
+
+		}
 
 		this.sunDirty = false;
 		this.atmosDirty = false;
 		this.cubeDirty = false;
+		this.cameraDirty = false;
+
+	}
+
+	/**
+	 * Run the per-frame Aerial Perspective LUT compute pass. Caller invokes
+	 * each frame after `setCamera()` has been called. Cheap (~1ms on mid GPU).
+	 *
+	 * Separated from `update()` because AP must refresh per frame regardless
+	 * of dirty flags, while `update()` is dirty-driven.
+	 */
+	async updateAerialPerspective() {
+
+		if ( ! this.aerialPerspectiveLUT ) return;
+		await this.aerialPerspectiveLUT.render();
 
 	}
 
@@ -224,6 +328,7 @@ export class SkyAtmosphereBaker {
 		this.transmittanceLUT.dispose();
 		this.multiScatterLUT.dispose();
 		this.skyViewLUT.dispose();
+		if ( this.aerialPerspectiveLUT ) this.aerialPerspectiveLUT.dispose();
 
 		this.cubeRenderTarget.dispose();
 		if ( this._pmremTarget ) this._pmremTarget.dispose();
