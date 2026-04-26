@@ -218,3 +218,63 @@ Once this plan is approved, work will be chunked into agent-sized tasks in this 
 4. `MultiScatterLUT` on top of Transmittance.
 5. `SkyViewLUT` on top of both.
 6. New `SkyAtmosphereMesh` sampling Sky-View LUT; wire into baker; `02-hillaire-baked.html` — completes Phase 1b.
+
+---
+
+## Phase 1 — Status (shipped)
+
+Both 1a and 1b are functional end-to-end. Verified via Chrome DevTools MCP:
+sunset (elev=1°) renders proper warm horizon + cool zenith, daytime (elev=60°)
+renders uniform azure overhead, mirror sphere reflects the cube, PBR sphere
+picks up IBL correctly, sun motion triggers re-bake within ~50 ms.
+
+Files of record:
+- `src/sky/SkyAtmosphereBaker.js` — owns LUT pipeline + cube + PMREM, dirty-flag scheduling
+- `src/sky/SkyAtmosphereMesh.js` — visible sky, samples Sky-View LUT, exposes `luminanceScale` (default 40) for the `ILLUMINANCE_IS_ONE` consumer-side scaling
+- `src/sky/luts/{Transmittance,MultiScatter,SkyView}LUT.js` — fragment-pass LUT builders
+- `src/sky/shaders/atmosphere.tsl.js` — shared TSL helpers (density, phases, ray-sphere, UV remaps)
+- `src/sky/AtmosphereParams.js` + `src/sky/AtmosphereUniforms.js` — Earth defaults + live-update uniform bundle
+- `examples/{01-legacy-baked,02-hillaire-baked,10-transmittance-lut,11-multiscatter-lut,12-skyview-lut}.html`
+
+### Carried forward as caveats / phase 2 cleanup
+
+- **luminanceScale = 40** is tuned by feel against ACES@0.5 exposure. Should
+  eventually be derived from a physically-grounded sun-luminance constant
+  (Unreal uses `Atmosphere.GlobalLuminanceScale` × sun-illuminance terms).
+- **Example 01** baker v1 dropped the Preetham path, so 01 also renders
+  Hillaire and the legacy Preetham sliders are no-ops. If the side-by-side
+  comparison is wanted back, add a thin `SkyAtmosphereBakerLegacy` wrapper
+  that keeps the original Preetham SkyMesh in its own cube target.
+- **Sun-disc angular diameter** is hardcoded `cos(0.004675)` in the mesh.
+  Promote to an atmosphere-uniform field for artistic control.
+- **`viewHeight` is hardcoded** to `bottomRadius + ε` in both SkyView LUT and
+  SkyAtmosphereMesh. Phase 2 must take camera position as input so
+  altitude effects (mountain peak, aerial views) are correct.
+- **Shader-build-time JS unrolling** is a real trap with TSL. Rule of thumb:
+  any loop of ≥ ~30 iterations whose body samples textures or calls a
+  multi-line Fn must use TSL `Loop`, not a JS `for`. The MS LUT crash that
+  blocked us for a session was 64 × 20 unrolled integrator bodies.
+- **`<!DOCTYPE` JSON parse error** in console on every page is benign
+  Vite/HMR/extension noise — ignore unless it appears alone.
+
+### Phase 2 entry point
+
+The next milestone is **aerial perspective on in-world geometry**: a 3D
+camera-frustum LUT (32×32×32 RGBA16F, X/Y = NDC, Z = depth slice) holding
+inscatter (RGB) + transmittance (A). Built every frame because it's
+view-dependent. Consumed by a main-scene post-process pass that
+reconstructs world-position from depth, samples the volume, and blends
+`final = sceneColor * T + inscatter`.
+
+Required sub-tasks (rough):
+1. `AerialPerspectiveLUT.js` — TSL compute pass writing to a 3D
+   StorageTexture. Each voxel ray-marches from camera through atmosphere
+   for `t ∈ [0, frustumZSlice]`, integrating with the same
+   `integrateScatteredLuminance` we already have but now with multi-scatter
+   feedback (the MS LUT) enabled.
+2. Per-frame Sky-View LUT update (the current bake-only model breaks once
+   the camera can move altitude).
+3. Main-scene post-process node — TSL pass that reads
+   `scene.depth` + `scene.color`, samples AP LUT, blends.
+4. Demo upgrade to `examples/03-aerial-perspective.html` with a terrain
+   mesh in the foreground so the haze is actually visible on something.
