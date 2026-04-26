@@ -161,6 +161,7 @@
 				const scenePass = pass( scene, camera );
 				const luminanceScaleU = baker.sky.luminanceScale;
 				const invProjU = uniform( camera.projectionMatrixInverse.clone() );
+				const cameraWorldU = uniform( camera.matrixWorld.clone() );
 				const hazeStrengthU = uniform( 1.0 );
 
 				const renderPipeline = new THREE.RenderPipeline( renderer );
@@ -169,8 +170,19 @@
 					aerialPerspectiveTexture: baker.aerialPerspectiveTexture,
 					luminanceScale: luminanceScaleU,
 					invProjUniform: invProjU,
+					cameraWorldUniform: cameraWorldU,
 					hazeStrength: hazeStrengthU,
 					kmPerSlice: AP_KM_PER_SLICE,
+					// Per-pixel raymarch fallback — geometry past 1024 km integrates
+					// the real atmosphere instead of clamping to slice 31 of the
+					// AP LUT. Required for orbit views of the planet sphere; without
+					// this, the far hemisphere of the planet reads as unhazed.
+					enableRaymarchFallback: true,
+					atmosphereUniforms: baker.atmosphereUniforms,
+					sunDirection: baker.sky.sunDirection,
+					viewHeightKm: baker.sky.viewHeight,
+					transmittanceLUT: baker.transmittanceLUT.texture,
+					multiScatterLUT: baker.multiScatterLUT.texture,
 					debugMode
 				} );
 
@@ -208,6 +220,7 @@
 
 					baker.setCamera( camera );
 					invProjU.value.copy( camera.projectionMatrixInverse );
+					cameraWorldU.value.copy( camera.matrixWorld );
 
 					try {
 

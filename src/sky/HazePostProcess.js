@@ -13,8 +13,11 @@ import {
 	mix,
 	abs,
 	max,
+	If,
 	normalize as tslNormalize
 } from 'three/tsl';
+
+import { integrateScatteredLuminance, moveToTopAtmosphere } from './shaders/atmosphere.tsl.js';
 
 /**
  * Build the TSL output node for the Aerial Perspective haze post-process.
@@ -55,7 +58,32 @@ import {
  *   path on grazing rays).
  * @param {THREE.UniformNode<mat4>} [args.cameraWorldUniform] - camera world
  *   matrix. Required when skyCube is provided so we can transform view-space
- *   ray directions into world space for the cube sample.
+ *   ray directions into world space for the cube sample. Also required when
+ *   `enableRaymarchFallback` is on (raymarch needs Y-up world ray direction).
+ *
+ * Per-pixel raymarch fallback (planet-scale support):
+ *
+ * @param {boolean} [args.enableRaymarchFallback=false] - when true, geometry
+ *   whose distance from the camera exceeds the AP LUT's coverage cap
+ *   (`kmPerSlice * resZ` km) falls back to a per-pixel
+ *   `integrateScatteredLuminance` ray-march so the planet surface from
+ *   altitude integrates the *actual* atmospheric optical path instead of
+ *   being clamped to slice 31 of the LUT. Required for orbit / high-altitude
+ *   demos where surface pixels can be 1000+ km away. Below the cap the LUT
+ *   is used unchanged.
+ *
+ *   Requires the following extra inputs to be supplied:
+ * @param {object} [args.atmosphereUniforms] - the same uniform bundle that
+ *   feeds the rest of the pipeline (`baker.atmosphereUniforms`).
+ * @param {THREE.UniformNode<vec3>} [args.sunDirection] - Y-up world-space
+ *   sun direction uniform (`baker.sky.sunDirection`).
+ * @param {THREE.UniformNode<float>} [args.viewHeightKm] - camera altitude
+ *   from planet centre, in km (`baker.sky.viewHeight`). Updated per-frame
+ *   via `baker.setCamera()`.
+ * @param {*} [args.transmittanceLUT] - the Transmittance LUT texture node
+ *   (`baker.transmittanceLUT.texture`).
+ * @param {*} [args.multiScatterLUT] - the Multi-Scatter LUT texture node
+ *   (`baker.multiScatterLUT.texture`).
  *
  * @returns {THREE.Node<vec4>} The output node — feed this to
  *   `RenderPipeline.outputNode = ...` (or the deprecated `PostProcessing`).
@@ -70,11 +98,18 @@ export function createHazeOutputNode( {
 	hazeStrength = null,
 	skyCube = null,
 	cameraWorldUniform = null,
+	enableRaymarchFallback = false,
+	atmosphereUniforms = null,
+	sunDirection = null,
+	viewHeightKm = null,
+	transmittanceLUT = null,
+	multiScatterLUT = null,
 	// Debug modes for bisecting silhouette artefacts. Pass one of:
 	// 'ap-rgb'   — AP inscatter colour only (×40 for visibility)
 	// 'ap-alpha' — AP alpha (transmittance loss) only as grayscale
 	// 'w'        — slice index w as grayscale; sky→1, foreground→0
 	// 'is-sky'   — sky mask: white = sky, black = geometry
+	// 'beyond'   — past-coverage mask: white = pixel uses raymarch fallback
 	// null       — normal compositing
 	debugMode = null
 } ) {
@@ -85,12 +120,33 @@ export function createHazeOutputNode( {
 
 	}
 
+	if ( enableRaymarchFallback ) {
+
+		const missing = [];
+		if ( ! atmosphereUniforms ) missing.push( 'atmosphereUniforms' );
+		if ( ! sunDirection ) missing.push( 'sunDirection' );
+		if ( ! viewHeightKm ) missing.push( 'viewHeightKm' );
+		if ( ! transmittanceLUT ) missing.push( 'transmittanceLUT' );
+		if ( ! multiScatterLUT ) missing.push( 'multiScatterLUT' );
+		if ( ! cameraWorldUniform ) missing.push( 'cameraWorldUniform' );
+		if ( missing.length ) {
+
+			throw new Error( 'createHazeOutputNode: enableRaymarchFallback requires ' + missing.join( ', ' ) + '.' );
+
+		}
+
+	}
+
 	const sceneColor = scenePass.getTextureNode( 'output' );
 	// `getViewZNode()` returns view-space Z (negative values, in scene units).
 	// This is the proper TSL way — sampling the depth texture directly returns
 	// raw NDC depth which doesn't read cleanly across backends.
 	const viewZNode = scenePass.getViewZNode();
 	const linearDepthNode = scenePass.getLinearDepthNode(); // [0,1], 1 = far plane
+
+	// AP coverage cap in km — the LUT spans [0, kmPerSlice * resZ]. Geometry
+	// whose distance-along-ray exceeds this needs the raymarch fallback.
+	const coverageKm = kmPerSlice * resZ;
 
 	return Fn( () => {
 
@@ -137,15 +193,91 @@ export function createHazeOutputNode( {
 		// epsilon to dodge depth-precision jitter near the far plane.
 		const isSky = linearDepthNode.greaterThan( float( 0.999 ) );
 
+		// Past-coverage mask — geometry whose distance exceeds the AP LUT's
+		// total range. Used to gate the raymarch fallback and to make the
+		// transition visible in `?debug=beyond`.
+		const beyondCoverage = distKm.greaterThan( float( coverageKm ) );
+
 		// Debug bisection — JS-side mode select (compiles to one branch).
 		if ( debugMode === 'ap-rgb' ) return vec4( ap.rgb.mul( luminanceScale ).mul( 5.0 ), 1.0 );
 		if ( debugMode === 'ap-alpha' ) return vec4( vec3( ap.a ), 1.0 );
 		if ( debugMode === 'w' ) return vec4( vec3( w ), 1.0 );
 		if ( debugMode === 'is-sky' ) return vec4( vec3( isSky.select( 1.0, 0.0 ) ), 1.0 );
+		if ( debugMode === 'beyond' ) return vec4( vec3( beyondCoverage.select( 1.0, 0.0 ) ), 1.0 );
 
-		const apRgb = ap.rgb.mul( luminanceScale );
-		const apA = hazeStrength !== null ? ap.a.mul( hazeStrength ) : ap.a;
-		const apRgbScaled = hazeStrength !== null ? apRgb.mul( hazeStrength ) : apRgb;
+		// --- LUT-based AP composite (close range) ---
+		const apRgbBase = ap.rgb.mul( luminanceScale );
+		const apABase = hazeStrength !== null ? ap.a.mul( hazeStrength ) : ap.a;
+		const apRgbBaseScaled = hazeStrength !== null ? apRgbBase.mul( hazeStrength ) : apRgbBase;
+
+		// Working accumulators. We start from the LUT path and overwrite for
+		// past-coverage geometry when raymarch fallback is wired.
+		const apA = apABase.toVar();
+		const apRgbScaled = apRgbBaseScaled.toVar();
+
+		if ( enableRaymarchFallback ) {
+
+			// Past-coverage branch — integrate atmosphere from camera through
+			// the actual surface distance. We feed the integrator
+			// `tMaxOverride = distAlongRayKm`, which makes it march exactly the
+			// camera→surface segment, clipped against ground/top spheres so
+			// rays that punch into the planet still terminate at the surface
+			// shell. The result is a real, finite, non-clamped optical-path
+			// answer — what slice 31 of the LUT *would* have stored if it
+			// extended that far.
+			//
+			// World-space ray direction = (cameraWorldMatrix · vec4(viewDir, 0)).xyz.
+			// Y-up world == atmosphere frame (planet centre at origin, +Y up),
+			// so we can use it directly as the integrator's `worldDir`.
+			If( beyondCoverage, () => {
+
+				const worldDirRaw = cameraWorldUniform.mul( vec4( rayDirView, float( 0.0 ) ) ).xyz;
+				const worldDir = tslNormalize( worldDirRaw ).toVar();
+
+				// Camera position in atmosphere frame: planet centre at origin,
+				// camera straight up by viewHeight. Horizontal world position
+				// is dropped — at planet scale the difference is invisible
+				// (atmosphere is symmetric around the centre) and matches the
+				// convention the sky mesh's space-view fallback uses.
+				const camPos = vec3( float( 0.0 ), viewHeightKm, float( 0.0 ) );
+				const moved = moveToTopAtmosphere( camPos, worldDir, atmosphereUniforms );
+				const startPos = moved.newPos.toVar();
+
+				const distKmVar = distKm.toVar();
+
+				const result = integrateScatteredLuminance( {
+					worldPos: startPos,
+					worldDir: worldDir,
+					sunDir: sunDirection,
+					params: atmosphereUniforms,
+					transmittanceLUT: transmittanceLUT,
+					multiScatterLUT: multiScatterLUT,
+					sampleCount: 30,
+					ground: false, // we already have the surface in the scene; don't double-count
+					mieRayPhase: true,
+					tMaxOverride: distKmVar
+				} );
+
+				// Composite identically to the LUT path: rgb = inscatter,
+				// alpha = 1 - mean transmittance. integrateScatteredLuminance
+				// returns transmittance as a vec3; collapse to a scalar for AP
+				// alpha (matches what the AP LUT bake does).
+				const validF = moved.valid.select( float( 1.0 ), float( 0.0 ) );
+				const rmRgb = result.L.mul( luminanceScale ).mul( validF );
+				const rmTransmittance = result.transmittance;
+				const rmAlpha = float( 1.0 ).sub(
+					rmTransmittance.x.add( rmTransmittance.y ).add( rmTransmittance.z ).mul( float( 1.0 / 3.0 ) )
+				).mul( validF );
+
+				const rmA = hazeStrength !== null ? rmAlpha.mul( hazeStrength ) : rmAlpha;
+				const rmRgbScaled = hazeStrength !== null ? rmRgb.mul( hazeStrength ) : rmRgb;
+
+				apA.assign( rmA );
+				apRgbScaled.assign( rmRgbScaled );
+
+			} );
+
+		}
 
 		let composited = baseColor.rgb.mul( float( 1.0 ).sub( apA ) ).add( apRgbScaled );
 
