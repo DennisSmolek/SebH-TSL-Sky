@@ -15,6 +15,7 @@ export default defineConfig({
 				legacy: resolve( __dirname, 'examples/01-legacy-baked.html' ),
 				hillaire: resolve( __dirname, 'examples/02-hillaire-baked.html' ),
 				ap_demo: resolve( __dirname, 'examples/03-aerial-perspective.html' ),
+				live_sky: resolve( __dirname, 'examples/04-live-sky.html' ),
 				transmittance: resolve( __dirname, 'examples/10-transmittance-lut.html' ),
 				multiscatter: resolve( __dirname, 'examples/11-multiscatter-lut.html' ),
 				skyview: resolve( __dirname, 'examples/12-skyview-lut.html' ),

@@ -1,4 +1,5 @@
 import {
+	Mesh,
 	Scene,
 	CubeCamera,
 	CubeRenderTarget,
@@ -255,6 +256,44 @@ export class SkyAtmosphereBaker {
 	markCubeDirty() {
 
 		this.cubeDirty = true;
+
+	}
+
+	/**
+	 * Mode B factory — return a sky mesh that the caller can add to their main
+	 * scene as a far-plane background. Shares the underlying material and
+	 * uniforms with the baker's internal `this.sky`, so `setSun` / `setCamera`
+	 * propagate automatically to both meshes.
+	 *
+	 * Use this when you want a *live* sky (per-frame `setCamera`-driven Sky-View
+	 * sample, sun-disc visible) instead of using `baker.texture` as a static
+	 * `scene.background`. The cube bake still runs on sun-dirty for IBL — the
+	 * filtered `baker.environmentTexture` remains the recommended
+	 * `scene.environment`.
+	 *
+	 * Sun disc is enabled by default on the live mesh (cube bake still
+	 * temporarily forces it off during the bake to keep PMREM clean).
+	 *
+	 * @param {object} [opts]
+	 * @param {number} [opts.scale=450000] uniform scale of the sky box.
+	 * @param {boolean} [opts.showSunDisc=true] flip the disc on for all meshes
+	 *   sharing this material; the cube bake still hides it.
+	 * @returns {THREE.Mesh}
+	 */
+	createSkyMesh( { scale = 450000, showSunDisc = true } = {} ) {
+
+		// Shared material → shared uniform nodes → setSun / setCamera updates
+		// hit both meshes. Re-using the same geometry is also fine.
+		const mesh = new Mesh( this.sky.geometry, this.sky.material );
+		mesh.scale.setScalar( scale );
+		mesh.frustumCulled = false;
+		// Render before opaque geometry so depth writes from the scene cover the
+		// far-plane sky correctly. depthWrite is already off on the material.
+		mesh.renderOrder = - 1;
+
+		if ( showSunDisc ) this.sky.showSunDisc.value = 1.0;
+
+		return mesh;
 
 	}
 
