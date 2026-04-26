@@ -1,0 +1,28 @@
+//* Dependencies ==============================
+node_modules/
+
+//* Build Output ==============================
+dist/
+coverage/
+
+//* Logs =====================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+//* Environment Files ========================
+.env
+.env.*
+!.env.example
+
+//* OS / Editor Files ========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+//* TypeScript ===============================
+*.tsbuildinfo
