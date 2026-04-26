@@ -196,6 +196,30 @@ post-process that reads single-sample depth *can* produce edge
 artifacts, but it wasn't this case. If you re-enable MSAA, you may
 still want FXAA after the haze composite to avoid that distinct issue.)
 
+### SkyView LUT degrades near top of atmosphere — raymarch fallback above topRadius
+
+The Sky-View LUT's horizon-packed V parameterization assumes the camera is
+*inside* the atmosphere and the planet horizon dominates the view. As the
+camera approaches `topRadius` (atmosphere boundary at ~100 km altitude),
+the horizon angle collapses — most V texels get crammed into a thin
+equatorial band. Visible symptom: concentric rings / banding on the sky
+mesh between roughly 80 km altitude and `topRadius`. This is inherent to
+the LUT's UV layout, not a bug.
+
+**Phase 3 fix in `SkyAtmosphereMesh._buildColorNode()`:** when
+`viewHeight > topRadius`, take the raymarch branch instead of the LUT
+sample. We `moveToTopAtmosphere` to clip the ray origin to the
+atmosphere boundary then call `integrateScatteredLuminance` per pixel
+(30 samples, full multi-scatter feedback). This requires the mesh to
+hold references to the Transmittance + MultiScatter LUTs — `baker`
+forwards them when constructing the mesh.
+
+The transition is a hard switch at `viewHeight == topRadius`. There's a
+visible step between ~99 km (LUT artifacts) and ~101 km (clean raymarch).
+SebH's reference handles this the same way (`RenderSkyAtmosphereInternalCs`
+checks `WorldHeight < AtmosphereParams.TopRadius`); a smooth blend across
+a transition band is a polish task, not a correctness one.
+
 ### Vite HMR + WebGPU shader edits
 
 Editing a TSL helper while a page is open often leaves the previous shader

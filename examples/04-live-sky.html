@@ -160,7 +160,7 @@
 				const eff = { sunElevation: 8, sunAzimuth: 0, cameraAltitude: 200, exposure: 0.5, hazeStrength: 1.0, hazeOn: true };
 				gui.add( eff, 'sunElevation', - 5, 90, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
 				gui.add( eff, 'sunAzimuth', - 180, 180, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
-				gui.add( eff, 'cameraAltitude', 1, 30000, 1 ).onChange( () => {
+				gui.add( eff, 'cameraAltitude', 1, 500000, 1 ).onChange( () => {
 					const dy = eff.cameraAltitude - camera.position.y;
 					camera.position.y = eff.cameraAltitude;
 					controls.target.y += dy;

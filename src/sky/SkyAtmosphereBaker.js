@@ -101,10 +101,13 @@ export class SkyAtmosphereBaker {
 		}
 
 		// --- sky scene + Hillaire mesh ---
+		// Pass T+MS LUTs so the mesh's space-view raymarch fallback is wired.
 		this.skyScene = new Scene();
 		this.sky = new SkyAtmosphereMesh( {
 			atmosphereUniforms: this.atmosphereUniforms,
-			skyViewLUT: this.skyViewLUT
+			skyViewLUT: this.skyViewLUT,
+			transmittanceLUT: this.transmittanceLUT,
+			multiScatterLUT: this.multiScatterLUT
 		} );
 		this.sky.scale.setScalar( 450000 );
 		this.skyScene.add( this.sky );

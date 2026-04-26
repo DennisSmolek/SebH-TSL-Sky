@@ -8,6 +8,7 @@ import {
 
 import {
 	Fn,
+	If,
 	float,
 	vec2,
 	vec3,
@@ -27,6 +28,8 @@ import {
 } from 'three/tsl';
 
 import {
+	integrateScatteredLuminance,
+	moveToTopAtmosphere,
 	raySphereIntersectNearest,
 	skyViewLutParamsToUv
 } from './shaders/atmosphere.tsl.js';
@@ -59,10 +62,14 @@ export class SkyAtmosphereMesh extends Mesh {
 	 * @param {object} args
 	 * @param {object} args.atmosphereUniforms  bundle from createAtmosphereUniforms
 	 * @param {SkyViewLUT} args.skyViewLUT      already-constructed Sky-View LUT
+	 * @param {TransmittanceLUT} [args.transmittanceLUT]  required for the
+	 *   space-view raymarch fallback (camera viewHeight > topRadius). Optional
+	 *   for ground-only callers; without it, the mesh stays in pure SkyView mode.
+	 * @param {MultiScatterLUT} [args.multiScatterLUT]  paired with transmittanceLUT.
 	 * @param {THREE.Vector3} [args.sunDirection]  initial Y-up world-space sun dir
 	 * @param {THREE.Vector3} [args.upVector]      initial Y-up world-space up dir
 	 */
-	constructor( { atmosphereUniforms, skyViewLUT, sunDirection, upVector } = {} ) {
+	constructor( { atmosphereUniforms, skyViewLUT, transmittanceLUT = null, multiScatterLUT = null, sunDirection, upVector } = {} ) {
 
 		if ( ! atmosphereUniforms ) throw new Error( 'SkyAtmosphereMesh: atmosphereUniforms is required' );
 		if ( ! skyViewLUT ) throw new Error( 'SkyAtmosphereMesh: skyViewLUT is required' );
@@ -73,6 +80,8 @@ export class SkyAtmosphereMesh extends Mesh {
 
 		this.atmosphereUniforms = atmosphereUniforms;
 		this.skyViewLUT = skyViewLUT;
+		this.transmittanceLUT = transmittanceLUT;
+		this.multiScatterLUT = multiScatterLUT;
 
 		/**
 		 * Sun direction in Y-up world space (same frame as the main scene).
@@ -171,6 +180,9 @@ export class SkyAtmosphereMesh extends Mesh {
 
 		const params = this.atmosphereUniforms;
 		const skyViewTex = this.skyViewLUT.texture;
+		const transmittanceTex = this.transmittanceLUT ? this.transmittanceLUT.texture : null;
+		const multiScatterTex = this.multiScatterLUT ? this.multiScatterLUT.texture : null;
+		const enableSpaceFallback = transmittanceTex !== null && multiScatterTex !== null;
 		const sunDirU = this.sunDirection;
 		const upU = this.upVector;
 		const showSunDiscU = this.showSunDisc;
@@ -196,17 +208,6 @@ export class SkyAtmosphereMesh extends Mesh {
 			// Light-view cosine, per Unreal RenderSkyRayMarching.hlsl:325-329.
 			// Build a stable on-plane basis perpendicular to up, aligned with the
 			// view direction's horizontal component, then project the sun onto it.
-			//
-			//   sideVector    = normalize( cross(up, viewDir) )       (perpendicular to both)
-			//   forwardVector = normalize( cross(sideVector, up) )    (in the horizontal plane,
-			//                                                          same azimuth as viewDir)
-			//   lightOnPlane  = normalize( (dot(sun, forward), dot(sun, side)) )
-			//   lightViewCos  = lightOnPlane.x
-			//
-			// Degenerate case: viewDir is exactly ±up (looking at zenith/nadir),
-			// `cross(up, viewDir)` is zero-length. We guard the normalize and the
-			// resulting lightViewCos is meaningless there, but that texel isn't
-			// azimuth-dependent anyway, so any value works.
 			const sideRaw = cross( upVec, viewDir );
 			const sideLen = max( length( sideRaw ), float( 1e-6 ) );
 			const sideVector = sideRaw.div( sideLen );
@@ -217,27 +218,77 @@ export class SkyAtmosphereMesh extends Mesh {
 			const lightOnPlaneLen = max( length( vec2( lightOnPlaneX, lightOnPlaneY ) ), float( 1e-6 ) );
 			const lightViewCosAngle = clamp( lightOnPlaneX.div( lightOnPlaneLen ), float( - 1.0 ), float( 1.0 ) );
 
-			// Ground intersection test. Unreal tests the planet from the camera
-			// position; we use (0, viewHeight, 0) in Y-up — the planet centred at
-			// origin with radius `bottomRadius`. Match the `>= 0` convention.
+			// Ground intersection test (planet at origin in Y-up; camera at
+			// (0, viewHeight, 0)).
 			const earthO = vec3( 0.0, 0.0, 0.0 );
 			const ro = vec3( float( 0.0 ), viewHeight, float( 0.0 ) );
 			const tPlanet = raySphereIntersectNearest( ro, viewDir, earthO, params.bottomRadius );
 			const intersectsGround = tPlanet.greaterThanEqual( float( 0.0 ) );
 
-			// Sky-View LUT UV + sample.
-			const lutUv = skyViewLutParamsToUv(
-				params,
-				intersectsGround,
-				viewZenithCosAngle,
-				lightViewCosAngle,
-				viewHeight
-			);
-			const skyColor = texture( skyViewTex, lutUv ).rgb.mul( luminanceScaleU );
+			// Sky color accumulator. Either populated by the SkyView LUT
+			// (camera inside / near atmosphere) or by a per-pixel raymarch
+			// (camera in space — the LUT's horizon-packed UV layout misallocates
+			// texels once the planet stops dominating the view).
+			const skyColor = vec3( 0.0, 0.0, 0.0 ).toVar();
 
-			// Sun disc. Same `cos(angularDiameter) + 0.00002` smoothstep as legacy.
-			// Unreal's `GetSunLuminance` uses `Atmosphere.SunDiscCosAngle`; we use
-			// the Earth default from AtmosphereParams (`sunAngularRadius` ≈ 4.675 mrad).
+			if ( enableSpaceFallback ) {
+
+				const inAtmosphere = viewHeight.lessThanEqual( params.topRadius );
+
+				If( inAtmosphere, () => {
+
+					const lutUv = skyViewLutParamsToUv(
+						params,
+						intersectsGround,
+						viewZenithCosAngle,
+						lightViewCosAngle,
+						viewHeight
+					);
+					skyColor.assign( texture( skyViewTex, lutUv ).rgb.mul( luminanceScaleU ) );
+
+				} ).Else( () => {
+
+					// Phase 3 — space-view raymarch fallback.
+					// Camera position in planet-centred Y-up frame.
+					const camPos = vec3( float( 0.0 ), viewHeight, float( 0.0 ) );
+
+					// Clip the ray origin to the atmosphere boundary; if the ray
+					// misses entirely the result stays at zero.
+					const moved = moveToTopAtmosphere( camPos, viewDir, params );
+					const startPos = moved.newPos.toVar();
+
+					const result = integrateScatteredLuminance( {
+						worldPos: startPos,
+						worldDir: viewDir,
+						sunDir: sunDir,
+						params: params,
+						transmittanceLUT: transmittanceTex,
+						multiScatterLUT: multiScatterTex,
+						sampleCount: 30,
+						ground: true,
+						mieRayPhase: true
+					} );
+
+					const validF = moved.valid.select( float( 1.0 ), float( 0.0 ) );
+					skyColor.assign( result.L.mul( luminanceScaleU ).mul( validF ) );
+
+				} );
+
+			} else {
+
+				// No fallback wired — pure SkyView LUT path (Phase 1b behaviour).
+				const lutUv = skyViewLutParamsToUv(
+					params,
+					intersectsGround,
+					viewZenithCosAngle,
+					lightViewCosAngle,
+					viewHeight
+				);
+				skyColor.assign( texture( skyViewTex, lutUv ).rgb.mul( luminanceScaleU ) );
+
+			}
+
+			// Sun disc — same in both paths. cos(angularDiameter) smoothstep.
 			const sunAngularDiameterCos = float( 0.9999890834 ); // cos(0.004675)
 			const cosSun = dot( viewDir, sunDir );
 			const sunDiscMask = smoothstep(
