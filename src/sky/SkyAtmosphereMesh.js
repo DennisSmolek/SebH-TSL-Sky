@@ -19,6 +19,7 @@ import {
 	length,
 	max,
 	clamp,
+	mix,
 	smoothstep,
 	texture,
 	modelViewProjection,
@@ -251,27 +252,33 @@ export class SkyAtmosphereMesh extends Mesh {
 
 			if ( enableSpaceFallback ) {
 
-				const inAtmosphere = viewHeight.lessThanEqual( params.topRadius );
+				// Smooth transition between LUT and raymarch around topRadius.
+				// Below blendStart: pure LUT (cheap, raymarch skipped via If).
+				// blendStart..blendEnd: smoothstep blend (both paths contribute).
+				// Above blendEnd: pure raymarch (LUT contribution lerped out).
+				const BLEND_HALF_WIDTH_KM = float( 20.0 );
+				const blendStart = params.topRadius.sub( BLEND_HALF_WIDTH_KM );
+				const blendEnd = params.topRadius.add( BLEND_HALF_WIDTH_KM );
 
-				If( inAtmosphere, () => {
+				// LUT path always runs — it's a single texture sample, near-free.
+				const lutUv = skyViewLutParamsToUv(
+					params,
+					intersectsGround,
+					viewZenithCosAngle,
+					lightViewCosAngle,
+					viewHeight
+				);
+				const lutColor = texture( skyViewTex, lutUv ).rgb.mul( luminanceScaleU );
 
-					const lutUv = skyViewLutParamsToUv(
-						params,
-						intersectsGround,
-						viewZenithCosAngle,
-						lightViewCosAngle,
-						viewHeight
-					);
-					skyColor.assign( texture( skyViewTex, lutUv ).rgb.mul( luminanceScaleU ) );
+				// Raymarch only when needed: above blendStart. Low-altitude users
+				// (the common case) skip the 30-sample integration entirely.
+				const rayColor = vec3( 0.0, 0.0, 0.0 ).toVar();
+				If( viewHeight.greaterThan( blendStart ), () => {
 
-				} ).Else( () => {
-
-					// Phase 3 — space-view raymarch fallback.
-					// Camera position in planet-centred frame.
+					// Camera position in planet-centred frame; clip the ray origin
+					// to the atmosphere boundary, and if the ray misses entirely
+					// the result stays at zero.
 					const camPos = upVec.mul( viewHeight );
-
-					// Clip the ray origin to the atmosphere boundary; if the ray
-					// misses entirely the result stays at zero.
 					const moved = moveToTopAtmosphere( camPos, viewDir, params );
 					const startPos = moved.newPos.toVar();
 
@@ -288,9 +295,12 @@ export class SkyAtmosphereMesh extends Mesh {
 					} );
 
 					const validF = moved.valid.select( float( 1.0 ), float( 0.0 ) );
-					skyColor.assign( result.L.mul( luminanceScaleU ).mul( validF ) );
+					rayColor.assign( result.L.mul( luminanceScaleU ).mul( validF ) );
 
 				} );
+
+				const blendT = smoothstep( blendStart, blendEnd, viewHeight );
+				skyColor.assign( mix( lutColor, rayColor, blendT ) );
 
 			} else {
 

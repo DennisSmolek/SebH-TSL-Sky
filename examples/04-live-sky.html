@@ -59,7 +59,9 @@
 				await logStage( 'renderer.init()', () => renderer.init() );
 				markStage( 2, 'running' );
 
-				const camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 1_000_000 );
+				// Far plane large enough to enclose the planet sphere when viewed
+				// from altitude. Earth radius ≈ 6.36 Mm so 20 Mm is comfortable.
+				const camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 20_000_000 );
 				camera.position.set( 0, 200, 0 );
 				camera.lookAt( 0, 200, 1000 );
 
@@ -89,10 +91,19 @@
 				// sun / atmosphere change.
 				scene.environment = baker.environmentTexture;
 
-				// Ground + cone scatter — same recipe as the AP demo.
+				// Planet sphere instead of a flat plane — locally indistinguishable
+				// from a flat plane (curvature radius is enormous), but from
+				// altitude shows correct planetary curvature instead of a
+				// hard-edged tile cutoff. Centred at (0, -bottomRadius_m, 0)
+				// so the surface sits at y = 0, matching `cameraAltitude` =
+				// camera.position.y. Same coordinate convention as before.
+				const bottomRadiusM = baker.atmosphereParams.bottomRadius * 1000;
 				const groundMat = new THREE.MeshStandardMaterial( { color: 0x6a6055, roughness: 0.95, metalness: 0.0 } );
-				const ground = new THREE.Mesh( new THREE.PlaneGeometry( 200000, 200000, 1, 1 ), groundMat );
-				ground.rotation.x = - Math.PI / 2;
+				const ground = new THREE.Mesh(
+					new THREE.SphereGeometry( bottomRadiusM, 128, 64 ),
+					groundMat
+				);
+				ground.position.y = - bottomRadiusM;
 				scene.add( ground );
 
 				const sunLight = new THREE.DirectionalLight( 0xffffff, 4.0 );
