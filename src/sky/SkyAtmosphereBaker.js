@@ -56,7 +56,21 @@ import { SkyAtmosphereMesh } from './SkyAtmosphereMesh.js';
  */
 export class SkyAtmosphereBaker {
 
-	constructor( renderer, { cubeSize = 256, atmosphere, lutResolutions, enableAerialPerspective = true } = {} ) {
+	constructor( renderer, {
+		cubeSize = 256,
+		atmosphere,
+		lutResolutions,
+		enableAerialPerspective = true,
+		// AP coverage knobs — exposed at the baker level so callers can opt
+		// into orbit-friendly long-range AP without reaching into the LUT.
+		// Default 8 km/slice × 32 slices = 256 km, matching SebH's reference
+		// for a ground-level demo. For planet-scale views (camera at 100 km+
+		// altitude looking down at a globe) bump kmPerSlice to ~32 for
+		// ~1024 km coverage at the cost of close-range slice resolution.
+		// Whatever value lands here MUST match the `kmPerSlice` passed to
+		// `createHazeOutputNode` so the LUT and the consumer agree.
+		apKmPerSlice = 8.0
+	} = {} ) {
 
 		this.renderer = renderer;
 		this.cubeSize = cubeSize;
@@ -91,12 +105,15 @@ export class SkyAtmosphereBaker {
 			this.aerialPerspectiveLUT = new AerialPerspectiveLUT( renderer, {
 				atmosphereUniforms: this.atmosphereUniforms,
 				transmittanceLUT: this.transmittanceLUT,
-				multiScatterLUT: this.multiScatterLUT
+				multiScatterLUT: this.multiScatterLUT,
+				kmPerSlice: apKmPerSlice
 			} );
+			this.apKmPerSlice = apKmPerSlice;
 
 		} else {
 
 			this.aerialPerspectiveLUT = null;
+			this.apKmPerSlice = apKmPerSlice;
 
 		}
 
