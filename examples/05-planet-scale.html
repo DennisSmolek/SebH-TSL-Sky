@@ -162,6 +162,10 @@
 				const luminanceScaleU = baker.sky.luminanceScale;
 				const invProjU = uniform( camera.projectionMatrixInverse.clone() );
 				const cameraWorldU = uniform( camera.matrixWorld.clone() );
+				// camera.far is large (20 Mm) for orbit views; opt-in to
+				// the viewZ-based sky-pixel test so AP doesn't double up
+				// the sky-mesh's gradient at the top of the screen.
+				const cameraFarU = uniform( camera.far );
 				const hazeStrengthU = uniform( 1.0 );
 
 				const renderPipeline = new THREE.RenderPipeline( renderer );
@@ -171,6 +175,7 @@
 					luminanceScale: luminanceScaleU,
 					invProjUniform: invProjU,
 					cameraWorldUniform: cameraWorldU,
+					cameraFarUniform: cameraFarU,
 					hazeStrength: hazeStrengthU,
 					kmPerSlice: AP_KM_PER_SLICE,
 					// Per-pixel raymarch fallback — geometry past 1024 km integrates

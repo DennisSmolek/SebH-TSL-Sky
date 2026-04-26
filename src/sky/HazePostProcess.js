@@ -98,6 +98,7 @@ export function createHazeOutputNode( {
 	hazeStrength = null,
 	skyCube = null,
 	cameraWorldUniform = null,
+	cameraFarUniform = null,
 	enableRaymarchFallback = false,
 	atmosphereUniforms = null,
 	sunDirection = null,
@@ -189,9 +190,24 @@ export function createHazeOutputNode( {
 		// trilinear sample at the actual UVW.
 		const ap = texture3D( aerialPerspectiveTexture, vec3( u.x, u.y, w ) ).level( 0 );
 
-		// Sky pixels (linearDepth ~= 1.0): pass through unchanged. Use a small
-		// epsilon to dodge depth-precision jitter near the far plane.
-		const isSky = linearDepthNode.greaterThan( float( 0.999 ) );
+		// Sky-pixel detection.
+		//
+		// Default: `linearDepthNode > 0.999` — works for normal `camera.far`
+		// values where the depth buffer's normalization gives sky pixels a
+		// linearDepth close to 1.0.
+		//
+		// Override: when `cameraFarUniform` is supplied (planet-scale demos
+		// using `far = 20_000_000`), use `viewZ < -0.999 * far` instead. The
+		// sky mesh draws with the `z = w` trick → NDC depth = 1 → viewZ at
+		// sky pixels equals exactly `-far`. With huge `far`, geometry —
+		// including the planet sphere from low altitude — has |viewZ| many
+		// orders of magnitude smaller than far, so the test is unambiguous
+		// independent of how the depth buffer normalizes. The linearDepth
+		// path stops being reliable once geometry compresses into a thin
+		// sliver of [0, 1] near the camera.
+		const isSky = cameraFarUniform
+			? viewZ.lessThan( cameraFarUniform.mul( - 0.999 ) )
+			: linearDepthNode.greaterThan( float( 0.999 ) );
 
 		// Past-coverage mask — geometry whose distance exceeds the AP LUT's
 		// total range. Used to gate the raymarch fallback and to make the
