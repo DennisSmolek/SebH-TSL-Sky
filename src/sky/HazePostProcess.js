@@ -84,6 +84,16 @@ import { integrateScatteredLuminance, moveToTopAtmosphere } from './shaders/atmo
  *   (`baker.transmittanceLUT.texture`).
  * @param {*} [args.multiScatterLUT] - the Multi-Scatter LUT texture node
  *   (`baker.multiScatterLUT.texture`).
+ * @param {THREE.UniformNode<float>} [args.raymarchOnlyUniform] - optional
+ *   0/1 float uniform. When set to 1, every geometry pixel goes through
+ *   the per-pixel raymarch path instead of the AP LUT — bypassing the
+ *   LUT entirely. Useful at orbit altitude where the LUT's
+ *   camera-frustum-aligned voxel parameterization breaks down: off-axis
+ *   views compress the slice distribution in screen space and start
+ *   producing direction-sensitive coverage holes. Mid-term this should
+ *   flip on automatically when camera altitude exceeds some threshold;
+ *   for now it's a manual toggle so we can A/B. Requires
+ *   `enableRaymarchFallback = true`.
  *
  * @returns {THREE.Node<vec4>} The output node — feed this to
  *   `RenderPipeline.outputNode = ...` (or the deprecated `PostProcessing`).
@@ -105,6 +115,7 @@ export function createHazeOutputNode( {
 	viewHeightKm = null,
 	transmittanceLUT = null,
 	multiScatterLUT = null,
+	raymarchOnlyUniform = null,
 	// Debug modes for bisecting silhouette artefacts. Pass one of:
 	// 'ap-rgb'   — AP inscatter colour only (×40 for visibility)
 	// 'ap-alpha' — AP alpha (transmittance loss) only as grayscale
@@ -223,6 +234,22 @@ export function createHazeOutputNode( {
 		// transition visible in `?debug=beyond`.
 		const beyondCoverage = distKm.greaterThan( float( coverageKm ) );
 
+		// "Force raymarch for every geometry pixel" — manual orbit-altitude
+		// override. The AP LUT's voxel parameterization is keyed to the
+		// camera's frustum and assumes the camera sits inside the atmosphere
+		// with reasonably ground-perpendicular orientation; off-axis views at
+		// altitude expose visible coverage holes / direction-sensitive haze.
+		// In raymarch-only mode we skip the LUT entirely and integrate every
+		// geometry pixel through the same `integrateScatteredLuminance` call
+		// the past-coverage branch already uses. See `raymarchOnlyUniform`
+		// docs at the top of this file.
+		const forceRaymarch = raymarchOnlyUniform
+			? raymarchOnlyUniform.greaterThan( float( 0.5 ) )
+			: null;
+		const useRaymarch = forceRaymarch
+			? beyondCoverage.or( forceRaymarch )
+			: beyondCoverage;
+
 		// Debug bisection — JS-side mode select (compiles to one branch).
 		if ( debugMode === 'ap-rgb' ) return vec4( ap.rgb.mul( luminanceScale ).mul( 5.0 ), 1.0 );
 		if ( debugMode === 'ap-alpha' ) return vec4( vec3( ap.a ), 1.0 );
@@ -256,7 +283,7 @@ export function createHazeOutputNode( {
 			// World-space ray direction = (cameraWorldMatrix · vec4(viewDir, 0)).xyz.
 			// Y-up world == atmosphere frame (planet centre at origin, +Y up),
 			// so we can use it directly as the integrator's `worldDir`.
-			If( beyondCoverage, () => {
+			If( useRaymarch, () => {
 
 				const worldDirRaw = cameraWorldUniform.mul( vec4( rayDirView, float( 0.0 ) ) ).xyz;
 				const worldDir = tslNormalize( worldDirRaw ).toVar();

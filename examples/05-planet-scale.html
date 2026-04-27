@@ -167,6 +167,12 @@
 				// the sky-mesh's gradient at the top of the screen.
 				const cameraFarU = uniform( camera.far );
 				const hazeStrengthU = uniform( 1.0 );
+				// 0 = use AP LUT for in-coverage geometry (fast path).
+				// 1 = bypass the LUT entirely; every geometry pixel goes through
+				// per-pixel `integrateScatteredLuminance`. Useful at orbit
+				// altitude where the LUT's frustum-aligned voxel grid produces
+				// directional coverage holes.
+				const raymarchOnlyU = uniform( 0.0 );
 
 				const renderPipeline = new THREE.RenderPipeline( renderer );
 				renderPipeline.outputNode = createHazeOutputNode( {
@@ -188,6 +194,7 @@
 					viewHeightKm: baker.sky.viewHeight,
 					transmittanceLUT: baker.transmittanceLUT.texture,
 					multiScatterLUT: baker.multiScatterLUT.texture,
+					raymarchOnlyUniform: raymarchOnlyU,
 					debugMode
 				} );
 
@@ -209,7 +216,11 @@
 					//   hazeOn     — the AP post-process. When off the planet
 					//                surface renders without atmospheric haze; the
 					//                sky-mesh still draws.
-					skyMeshOn: true
+					skyMeshOn: true,
+					// Bypass the AP LUT and raymarch every geometry pixel. The LUT
+					// is fast and accurate at ground level, but its voxel
+					// parameterization breaks down at altitude on off-axis views.
+					hazeRaymarchOnly: false
 				};
 				gui.add( eff, 'sunElevation', - 5, 90, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
 				gui.add( eff, 'sunAzimuth', - 180, 180, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
@@ -223,6 +234,7 @@
 				gui.add( eff, 'hazeStrength', 0, 3, 0.01 ).onChange( () => { hazeStrengthU.value = eff.hazeOn ? eff.hazeStrength : 0; } );
 				gui.add( eff, 'hazeOn' ).onChange( () => { hazeStrengthU.value = eff.hazeOn ? eff.hazeStrength : 0; } );
 				gui.add( eff, 'skyMeshOn' ).onChange( () => { skyMesh.visible = eff.skyMeshOn; } );
+				gui.add( eff, 'hazeRaymarchOnly' ).onChange( () => { raymarchOnlyU.value = eff.hazeRaymarchOnly ? 1 : 0; } );
 
 				window.addEventListener( 'resize', () => {
 
