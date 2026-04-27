@@ -518,12 +518,19 @@ export function integrateScatteredLuminance( {
 	// long horizon-grazing rays. Passing a per-pixel hash here breaks
 	// the coherence; the noise then averages out across screen-space
 	// neighbours rather than aligning into bands.
-	sampleJitter = null
+	// extEpsNode — optional TSL float: minimum extinction for division; default 1e-6.
+	sampleJitter = null,
+	extEpsNode = undefined
 } ) {
 
 	const earthO = vec3( 0.0, 0.0, 0.0 );
 	const SAMPLE_SEGMENT_T = 0.3;
 	const segmentT = sampleJitter ? sampleJitter : float( SAMPLE_SEGMENT_T );
+
+	// Epsilon for extinction / power-serie (Frostbite); override via extEpsNode for tuning.
+	const extEps = extEpsNode !== undefined && extEpsNode !== null
+		? extEpsNode
+		: float( 1e-6 );
 
 	// ---- tMax: intersect with ground/top, mirroring the HLSL branching ----
 	const tBottom = raySphereIntersectNearest( worldPos, worldDir, earthO, params.bottomRadius );
@@ -547,10 +554,6 @@ export function integrateScatteredLuminance( {
 	const multiScatAs1 = vec3( 0.0, 0.0, 0.0 ).toVar();
 
 	const tPrev = float( 0.0 ).toVar();
-
-	// Small epsilon guards a /extinction divide where extinction can go to zero
-	// above the Mie/Rayleigh layers. Same treatment as the Frostbite reference.
-	const extEps = float( 1e-6 );
 
 	// Ray-march loop. Runs on-GPU via TSL Loop (not JS-unrolled) so that callers
 	// doing per-pixel spherical integration (MS LUT: 64 directions) don't produce

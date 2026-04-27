@@ -69,7 +69,10 @@ export class SkyAtmosphereBaker {
 		// ~1024 km coverage at the cost of close-range slice resolution.
 		// Whatever value lands here MUST match the `kmPerSlice` passed to
 		// `createHazeOutputNode` so the LUT and the consumer agree.
-		apKmPerSlice = 8.0
+		apKmPerSlice = 8.0,
+		// Optional AP volume resolution override for diagnostics / high-cost
+		// quality tests. Default stays inside AerialPerspectiveLUT (32³).
+		apResolution = undefined
 	} = {} ) {
 
 		this.renderer = renderer;
@@ -103,6 +106,7 @@ export class SkyAtmosphereBaker {
 		if ( enableAerialPerspective ) {
 
 			this.aerialPerspectiveLUT = new AerialPerspectiveLUT( renderer, {
+				resolution: apResolution,
 				atmosphereUniforms: this.atmosphereUniforms,
 				transmittanceLUT: this.transmittanceLUT,
 				multiScatterLUT: this.multiScatterLUT,

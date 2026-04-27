@@ -32,7 +32,10 @@
 			import { createHazeOutputNode } from '/src/sky/HazePostProcess.js';
 			import { createStartGate, logStage } from '/src/demo/startGate.js';
 
-			const debugMode = new URLSearchParams( window.location.search ).get( 'debug' );
+			const _q = new URLSearchParams( window.location.search );
+			const debugMode = _q.get( 'debug' );
+			// Orbit / planet-scale: default log-Z for depth precision; compare with `?logDepth=0`.
+			const useLogDepth = _q.get( 'logDepth' ) !== '0';
 
 			// `?hires=1` doubles Transmittance + Multi-Scatter LUT resolution.
 			// At altitudes 50–100 km looking near the horizon, the TLUT's
@@ -72,7 +75,7 @@
 			gate.run( async ( { markStage } ) => {
 
 				markStage( 0, 'running' );
-				const renderer = new THREE.WebGPURenderer( { antialias: false } );
+				const renderer = new THREE.WebGPURenderer( { antialias: false, logarithmicDepthBuffer: useLogDepth } );
 				renderer.setPixelRatio( window.devicePixelRatio );
 				renderer.setSize( window.innerWidth, window.innerHeight );
 				renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -207,6 +210,7 @@
 					invProjUniform: invProjU,
 					cameraWorldUniform: cameraWorldU,
 					cameraFarUniform: cameraFarU,
+					logarithmicDepthBuffer: useLogDepth,
 					hazeStrength: hazeStrengthU,
 					kmPerSlice: AP_KM_PER_SLICE,
 					// Per-pixel raymarch fallback — geometry past 1024 km integrates

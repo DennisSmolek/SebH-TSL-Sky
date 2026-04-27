@@ -21,6 +21,7 @@ import {
 } from 'three/tsl';
 
 import { integrateScatteredLuminance, moveToTopAtmosphere } from './shaders/atmosphere.tsl.js';
+import { createHazeDepthNodes } from './hazeScenePassDepth.js';
 
 /**
  * Build the TSL output node for the Aerial Perspective haze post-process.
@@ -98,6 +99,10 @@ import { integrateScatteredLuminance, moveToTopAtmosphere } from './shaders/atmo
  *   for now it's a manual toggle so we can A/B. Requires
  *   `enableRaymarchFallback = true`.
  *
+ * @param {boolean} [args.logarithmicDepthBuffer=false] - Must match
+ *   `WebGPURenderer.logarithmicDepthBuffer`. When true, viewZ/linear depth are
+ *   built with `logarithmicDepthToViewZ` (PassNode’s default assumes perspective
+ *   depth and breaks haze if this is set wrong).
  * @returns {THREE.Node<vec4>} The output node — feed this to
  *   `RenderPipeline.outputNode = ...` (or the deprecated `PostProcessing`).
  */
@@ -112,6 +117,7 @@ export function createHazeOutputNode( {
 	skyCube = null,
 	cameraWorldUniform = null,
 	cameraFarUniform = null,
+	logarithmicDepthBuffer = false,
 	enableRaymarchFallback = false,
 	atmosphereUniforms = null,
 	sunDirection = null,
@@ -153,11 +159,9 @@ export function createHazeOutputNode( {
 	}
 
 	const sceneColor = scenePass.getTextureNode( 'output' );
-	// `getViewZNode()` returns view-space Z (negative values, in scene units).
-	// This is the proper TSL way — sampling the depth texture directly returns
-	// raw NDC depth which doesn't read cleanly across backends.
-	const viewZNode = scenePass.getViewZNode();
-	const linearDepthNode = scenePass.getLinearDepthNode(); // [0,1], 1 = far plane
+	// `PassNode` uses `perspectiveDepthToViewZ` for `getViewZNode` — correct for
+	// default depth, wrong when `logarithmicDepthBuffer` is on; see hazeScenePassDepth.js
+	const { viewZNode, linearDepthNode } = createHazeDepthNodes( scenePass, logarithmicDepthBuffer );
 
 	// AP coverage cap in km — the LUT spans [0, kmPerSlice * resZ]. Geometry
 	// whose distance-along-ray exceeds this needs the raymarch fallback.
