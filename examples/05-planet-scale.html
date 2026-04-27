@@ -17,7 +17,9 @@
 	<body>
 		<div id="info">
 			Planet-scale — sphere ground, orbit-altitude camera, extended AP coverage.<br>
-			Stable counterpart: <a href="/examples/04-live-sky.html" style="color:#fc9">04-live-sky</a>
+			Stable counterpart: <a href="/examples/04-live-sky.html" style="color:#fc9">04-live-sky</a> ·
+			LUT res: <a href="?" style="color:#fc9">default</a> /
+			<a href="?hires=1" style="color:#fc9">hires</a>
 		</div>
 		<script type="module">
 			import * as THREE from 'three/webgpu';
@@ -31,6 +33,22 @@
 			import { createStartGate, logStage } from '/src/demo/startGate.js';
 
 			const debugMode = new URLSearchParams( window.location.search ).get( 'debug' );
+
+			// `?hires=1` doubles Transmittance + Multi-Scatter LUT resolution.
+			// At altitudes 50–100 km looking near the horizon, the TLUT's
+			// Bruneton mu remap has a very steep gradient — a horizontal
+			// screen row at a fixed elevation angle clusters into a narrow
+			// U range and 256 texels can't resolve adjacent rows, producing
+			// chunky horizontal banding on the planet surface. Doubling to
+			// 512×128 (TLUT) and 64×64 (MS) cleans it up at the cost of
+			// roughly 4× the LUT memory. Memory cost is small in absolute
+			// terms (a few MB) but kept opt-in so the default footprint
+			// stays SebH-canonical until we decide it's worth shipping.
+			const hires = new URLSearchParams( window.location.search ).get( 'hires' ) === '1';
+			const lutResolutions = hires ? {
+				transmittance: { width: 512, height: 128 },
+				multiScatter: { width: 64, height: 64 }
+			} : undefined;
 
 			// AP coverage policy for this demo. 32 km/slice × 32 slices ≈ 1024 km.
 			// Tradeoff: close-range slice 0 spans 32 km instead of 8, so haze on
@@ -78,7 +96,8 @@
 					const b = new SkyAtmosphereBaker( renderer, {
 						cubeSize: 256,
 						enableAerialPerspective: true,
-						apKmPerSlice: AP_KM_PER_SLICE
+						apKmPerSlice: AP_KM_PER_SLICE,
+						lutResolutions
 					} );
 					b.setSun( { elevation: 8, azimuth: 0 } );
 					b.setCamera( camera );
