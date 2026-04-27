@@ -116,6 +116,12 @@
 				const skyMesh = baker.createSkyMesh();
 				scene.add( skyMesh );
 
+				// IBL — baked cube → PMREM. The cube is baked at the origin
+				// of the skyScene (planet surface), so at altitude the IBL
+				// is "what the sky looks like FROM the ground" rather than
+				// from where the camera actually is. Toggleable from the GUI
+				// to isolate whether on-surface artefacts come from IBL vs
+				// the haze raymarch.
 				scene.environment = baker.environmentTexture;
 
 				// Planet sphere — locally indistinguishable from a flat plane,
@@ -239,7 +245,11 @@
 					// Bypass the AP LUT and raymarch every geometry pixel. The LUT
 					// is fast and accurate at ground level, but its voxel
 					// parameterization breaks down at altitude on off-axis views.
-					hazeRaymarchOnly: false
+					hazeRaymarchOnly: false,
+					// PMREM IBL on the planet surface. Off → surface lit by
+					// directional sun only, useful for isolating raymarch
+					// artefacts from IBL contributions.
+					iblOn: true
 				};
 				gui.add( eff, 'sunElevation', - 5, 90, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
 				gui.add( eff, 'sunAzimuth', - 180, 180, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
@@ -254,6 +264,7 @@
 				gui.add( eff, 'hazeOn' ).onChange( () => { hazeStrengthU.value = eff.hazeOn ? eff.hazeStrength : 0; } );
 				gui.add( eff, 'skyMeshOn' ).onChange( () => { skyMesh.visible = eff.skyMeshOn; } );
 				gui.add( eff, 'hazeRaymarchOnly' ).onChange( () => { raymarchOnlyU.value = eff.hazeRaymarchOnly ? 1 : 0; } );
+				gui.add( eff, 'iblOn' ).onChange( () => { scene.environment = eff.iblOn ? baker.environmentTexture : null; } );
 
 				window.addEventListener( 'resize', () => {
 
@@ -291,7 +302,7 @@
 
 					await baker.updateAerialPerspective();
 
-					if ( scene.environment !== baker.environmentTexture ) {
+					if ( eff.iblOn && scene.environment !== baker.environmentTexture ) {
 
 						scene.environment = baker.environmentTexture;
 

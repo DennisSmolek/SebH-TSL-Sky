@@ -269,6 +269,11 @@ export function createHazeOutputNode( {
 		const apA = apABase.toVar();
 		const apRgbScaled = apRgbBaseScaled.toVar();
 
+		// Raw raymarch output, exposed as debug. Set inside the raymarch branch
+		// when active so adjacent debug modes show meaningful values.
+		const rmDebugRgb = vec3( 0.0, 0.0, 0.0 ).toVar();
+		const rmDebugAlpha = float( 0.0 ).toVar();
+
 		if ( enableRaymarchFallback ) {
 
 			// Past-coverage branch — integrate atmosphere from camera through
@@ -334,10 +339,20 @@ export function createHazeOutputNode( {
 
 				apA.assign( rmA );
 				apRgbScaled.assign( rmRgbScaled );
+				rmDebugRgb.assign( rmRgbScaled );
+				rmDebugAlpha.assign( rmA );
 
 			} );
 
 		}
+
+		// Raymarch debug modes — useful at altitude when isolating where
+		// chunky/banded artefacts originate. `rm-rgb` shows raw inscatter
+		// brightness only (no compositing), `rm-alpha` shows the raymarch's
+		// transmittance loss as grayscale. Pixels not routed through the
+		// raymarch (LUT path, or sky pixels) read black in these modes.
+		if ( debugMode === 'rm-rgb' ) return vec4( rmDebugRgb.mul( 5.0 ), 1.0 );
+		if ( debugMode === 'rm-alpha' ) return vec4( vec3( rmDebugAlpha ), 1.0 );
 
 		let composited = baseColor.rgb.mul( float( 1.0 ).sub( apA ) ).add( apRgbScaled );
 
