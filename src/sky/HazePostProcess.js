@@ -14,6 +14,9 @@ import {
 	abs,
 	max,
 	If,
+	dot,
+	fract,
+	sin,
 	normalize as tslNormalize
 } from 'three/tsl';
 
@@ -304,6 +307,17 @@ export function createHazeOutputNode( {
 
 				const distKmVar = distKm.toVar();
 
+				// Per-pixel hash in [0, 1] — breaks the coherent
+				// sample-position alignment that caused horizontal banding
+				// in transmittance (visible at 50–105 km altitude in
+				// `?debug=rm-alpha`). Cheap one-line hash off uv; not blue
+				// noise but good enough to fully scramble the pattern at
+				// the resolutions we use. Replaces the canonical fixed
+				// `SAMPLE_SEGMENT_T = 0.3` offset with a per-pixel value
+				// so adjacent pixels' samples no longer line up at the
+				// same altitudes.
+				const hash01 = fract( sin( dot( u, vec2( 12.9898, 78.233 ) ) ).mul( 43758.5453 ) );
+
 				const result = integrateScatteredLuminance( {
 					worldPos: startPos,
 					worldDir: worldDir,
@@ -320,7 +334,8 @@ export function createHazeOutputNode( {
 					sampleCount: 64,
 					ground: false, // we already have the surface in the scene; don't double-count
 					mieRayPhase: true,
-					tMaxOverride: distKmVar
+					tMaxOverride: distKmVar,
+					sampleJitter: hash01
 				} );
 
 				// Composite identically to the LUT path: rgb = inscatter,

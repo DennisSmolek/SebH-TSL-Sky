@@ -508,11 +508,22 @@ export function integrateScatteredLuminance( {
 	ground = true,
 	mieRayPhase = false,
 	multiScatterLUT = null,
-	tMaxOverride = null
+	tMaxOverride = null,
+	// Optional per-call float TSL node in [0, 1] used as the within-step
+	// offset instead of the canonical SebH constant (`0.3`). When every
+	// pixel shares the same fixed offset, neighbouring pixels with
+	// near-identical `tMax` accumulate optical depth at structurally
+	// aligned sample altitudes, producing visible banding in the
+	// transmittance (alpha) channel — most obvious from altitude on
+	// long horizon-grazing rays. Passing a per-pixel hash here breaks
+	// the coherence; the noise then averages out across screen-space
+	// neighbours rather than aligning into bands.
+	sampleJitter = null
 } ) {
 
 	const earthO = vec3( 0.0, 0.0, 0.0 );
 	const SAMPLE_SEGMENT_T = 0.3;
+	const segmentT = sampleJitter ? sampleJitter : float( SAMPLE_SEGMENT_T );
 
 	// ---- tMax: intersect with ground/top, mirroring the HLSL branching ----
 	const tBottom = raySphereIntersectNearest( worldPos, worldDir, earthO, params.bottomRadius );
@@ -547,7 +558,7 @@ export function integrateScatteredLuminance( {
 	// therefore carry state across iterations.
 	Loop( { start: 0, end: sampleCount, type: 'int' }, ( { i } ) => {
 
-		const newT = tMax.mul( float( i ).add( float( SAMPLE_SEGMENT_T ) ).div( float( sampleCount ) ) );
+		const newT = tMax.mul( float( i ).add( segmentT ).div( float( sampleCount ) ) );
 		const dt = newT.sub( tPrev );
 
 		const P = worldPos.add( worldDir.mul( newT ) );
