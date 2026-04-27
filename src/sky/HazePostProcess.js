@@ -169,7 +169,16 @@ export function createHazeOutputNode( {
 		// projection, then `distAlongRay = |viewZ| / |rayDir.z|`.
 		const viewZ = viewZNode;
 
-		const ndc2 = vec2( u.x.mul( 2.0 ).sub( 1.0 ), u.y.mul( 2.0 ).sub( 1.0 ) );
+		// NDC reconstruction. WebGPU clip space is Y-flipped relative to WebGL —
+		// so when we hand-build a clip vector from `uv()`, we need ndc.y =
+		// 1 - 2*uv.y, NOT 2*uv.y - 1. Getting this wrong produces a vertically
+		// mirrored ray direction: looking up at the sky, the haze pass's
+		// raymarch fallback would integrate *downward* through the atmosphere
+		// instead of upward into space — yielding a second atmospheric
+		// gradient that overlays the sky-mesh's correct gradient. (The slice-W
+		// distance computation above is unaffected because it only uses the
+		// magnitude / cos-from-axis of the ray, both of which are sign-symmetric.)
+		const ndc2 = vec2( u.x.mul( 2.0 ).sub( 1.0 ), float( 1.0 ).sub( u.y.mul( 2.0 ) ) );
 		const clipFar = vec4( ndc2.x, ndc2.y, float( 1.0 ), float( 1.0 ) );
 		const viewFar = invProjUniform.mul( clipFar );
 		const rayDirView = viewFar.xyz.div( viewFar.w );
@@ -220,6 +229,8 @@ export function createHazeOutputNode( {
 		if ( debugMode === 'w' ) return vec4( vec3( w ), 1.0 );
 		if ( debugMode === 'is-sky' ) return vec4( vec3( isSky.select( 1.0, 0.0 ) ), 1.0 );
 		if ( debugMode === 'beyond' ) return vec4( vec3( beyondCoverage.select( 1.0, 0.0 ) ), 1.0 );
+		if ( debugMode === 'lin-depth' ) return vec4( vec3( linearDepthNode ), 1.0 );
+		if ( debugMode === 'view-z' && cameraFarUniform ) return vec4( vec3( abs( viewZ ).div( cameraFarUniform ) ), 1.0 );
 
 		// --- LUT-based AP composite (close range) ---
 		const apRgbBase = ap.rgb.mul( luminanceScale );

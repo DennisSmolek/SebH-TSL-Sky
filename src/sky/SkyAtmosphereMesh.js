@@ -170,7 +170,16 @@ export class SkyAtmosphereMesh extends Mesh {
 		const colorNode = this._buildColorNode();
 
 		material.side = BackSide;
-		material.depthWrite = false;
+		// `depthWrite = true` so sky pixels stamp the far-plane value into the
+		// scene depth buffer (the `z = w` vertex trick gives them NDC.z = 1).
+		// The post-process haze pass uses scene depth to discriminate sky vs
+		// geometry; with depthWrite off, sky pixels read the cleared depth
+		// value which `getViewZNode` / `getLinearDepthNode` then interpret as
+		// "at the camera" rather than "at the far plane" — breaking every
+		// depth-based sky test. Writing real far-plane depth makes both tests
+		// reliable. Geometry still wins the depth test (it's closer than far)
+		// so this doesn't occlude anything.
+		material.depthWrite = true;
 		material.vertexNode = vertexNode;
 		material.colorNode = colorNode;
 
