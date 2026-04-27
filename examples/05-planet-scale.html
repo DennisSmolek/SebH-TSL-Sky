@@ -192,7 +192,25 @@
 				} );
 
 				const gui = renderer.inspector.createParameters( 'Atmosphere' );
-				const eff = { sunElevation: 8, sunAzimuth: 0, cameraAltitude: 200, exposure: 0.5, hazeStrength: 1.0, hazeOn: true };
+				const eff = {
+					sunElevation: 8,
+					sunAzimuth: 0,
+					cameraAltitude: 200,
+					exposure: 0.5,
+					hazeStrength: 1.0,
+					hazeOn: true,
+					// Isolation toggles — flip one off to figure out which system
+					// is producing a given on-screen artefact.
+					//   skyMeshOn  — the SkyAtmosphereMesh that renders the actual
+					//                visible sky (Sky-View LUT below topRadius +
+					//                space-view raymarch above). When off the sky
+					//                shows whatever the renderer clears to (black);
+					//                the planet surface still has AP haze.
+					//   hazeOn     — the AP post-process. When off the planet
+					//                surface renders without atmospheric haze; the
+					//                sky-mesh still draws.
+					skyMeshOn: true
+				};
 				gui.add( eff, 'sunElevation', - 5, 90, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
 				gui.add( eff, 'sunAzimuth', - 180, 180, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
 				gui.add( eff, 'cameraAltitude', 1, 500000, 1 ).onChange( () => {
@@ -204,6 +222,7 @@
 				gui.add( eff, 'exposure', 0, 2, 0.01 ).onChange( () => { renderer.toneMappingExposure = eff.exposure; } );
 				gui.add( eff, 'hazeStrength', 0, 3, 0.01 ).onChange( () => { hazeStrengthU.value = eff.hazeOn ? eff.hazeStrength : 0; } );
 				gui.add( eff, 'hazeOn' ).onChange( () => { hazeStrengthU.value = eff.hazeOn ? eff.hazeStrength : 0; } );
+				gui.add( eff, 'skyMeshOn' ).onChange( () => { skyMesh.visible = eff.skyMeshOn; } );
 
 				window.addEventListener( 'resize', () => {
 
