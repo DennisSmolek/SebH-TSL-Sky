@@ -306,7 +306,13 @@ export function createHazeOutputNode( {
 					params: atmosphereUniforms,
 					transmittanceLUT: transmittanceLUT,
 					multiScatterLUT: multiScatterLUT,
-					sampleCount: 30,
+					// Grazing rays from 50–100 km altitude can integrate over
+					// 1000+ km of atmosphere; at 30 samples that's ~33 km/step,
+					// which undersamples the TLUT's near-horizon remap and
+					// produces visible rings/banding closer to the planet
+					// horizon. 64 samples (~16 km/step on a 1000 km ray) cleans
+					// it up at modest cost — geometry pixels only, not sky.
+					sampleCount: 64,
 					ground: false, // we already have the surface in the scene; don't double-count
 					mieRayPhase: true,
 					tMaxOverride: distKmVar
