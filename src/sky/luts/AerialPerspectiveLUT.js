@@ -56,10 +56,10 @@ import {
  * one dispatch, which is more idiomatic on WebGPU.
  *
  * Coordinate frame: camera position is given in three.js Y-up world space (m).
- * We convert to the atmosphere's planet-centred frame internally
- * (`atmosCamPos = (0, bottomRadius + camY_km, 0)`). View directions are taken
- * straight from the camera's world-space transform — no frame conversion
- * needed since the integrator is frame-invariant.
+ * Ground-level callers can keep the legacy flat convention (`camera.y` =
+ * altitude), while planet-scale callers pass a planet centre so the AP volume
+ * receives the true planet-centred camera vector. View directions are taken
+ * straight from the camera's world-space transform.
  *
  * @typedef {Object} AerialPerspectiveLUTOptions
  * @property {{x:number,y:number,z:number}} [resolution] Voxel grid size. Defaults to 32³.
@@ -152,20 +152,27 @@ export class AerialPerspectiveLUT {
 	 * cache `camera` — it only reads matrices at this call.
 	 *
 	 * Internally:
-	 *  - cameraPosKm = (0, bottomRadius + camera.y_world_meters · 0.001, 0)
-	 *    (we ignore horizontal position; planet curvature isn't perceptible at
-	 *    ground-level horizontal distances)
+	 *  - cameraPosKm = true planet-centred camera vector when `planetCenter` is supplied.
+	 *    Otherwise the legacy flat convention is used:
+	 *    (0, bottomRadius + camera.y_world_meters · 0.001, 0)
 	 *  - invProj = camera.projectionMatrixInverse
 	 *  - cameraMatrixWorld = camera.matrixWorld
 	 */
-	setCamera( camera ) {
+	setCamera( camera, { planetCenter = null } = {} ) {
 
 		camera.updateMatrixWorld();
 		camera.updateProjectionMatrix();
 
-		const camYm = camera.position.y; // metres
 		const bottomR = this.atmosphereUniforms.bottomRadius.value; // km
-		this._cameraPosKm.value.set( 0.0, bottomR + camYm * 0.001, 0.0 );
+		if ( planetCenter ) {
+
+			this._cameraPosKm.value.copy( camera.position ).sub( planetCenter ).multiplyScalar( 0.001 );
+
+		} else {
+
+			this._cameraPosKm.value.set( 0.0, bottomR + camera.position.y * 0.001, 0.0 );
+
+		}
 
 		this._invProj.value.copy( camera.projectionMatrixInverse );
 		this._cameraMatrixWorld.value.copy( camera.matrixWorld );

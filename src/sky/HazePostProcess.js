@@ -17,6 +17,7 @@ import {
 	dot,
 	fract,
 	sin,
+	smoothstep,
 	normalize as tslNormalize
 } from 'three/tsl';
 
@@ -84,6 +85,9 @@ import { createHazeDepthNodes } from './hazeScenePassDepth.js';
  * @param {THREE.UniformNode<float>} [args.viewHeightKm] - camera altitude
  *   from planet centre, in km (`baker.sky.viewHeight`). Updated per-frame
  *   via `baker.setCamera()`.
+ * @param {THREE.UniformNode<vec3>} [args.cameraPositionKm] - optional true
+ *   planet-centred camera position in km. When omitted the legacy
+ *   `(0, viewHeightKm, 0)` convention is used.
  * @param {*} [args.transmittanceLUT] - the Transmittance LUT texture node
  *   (`baker.transmittanceLUT.texture`).
  * @param {*} [args.multiScatterLUT] - the Multi-Scatter LUT texture node
@@ -118,10 +122,15 @@ export function createHazeOutputNode( {
 	cameraWorldUniform = null,
 	cameraFarUniform = null,
 	logarithmicDepthBuffer = false,
+	hazeModeUniform = null,
+	raymarchBlendStartKm = null,
+	raymarchBlendEndKm = null,
+	raymarchCoverageBlendKm = null,
 	enableRaymarchFallback = false,
 	atmosphereUniforms = null,
 	sunDirection = null,
 	viewHeightKm = null,
+	cameraPositionKm = null,
 	transmittanceLUT = null,
 	multiScatterLUT = null,
 	raymarchOnlyUniform = null,
@@ -146,7 +155,7 @@ export function createHazeOutputNode( {
 		const missing = [];
 		if ( ! atmosphereUniforms ) missing.push( 'atmosphereUniforms' );
 		if ( ! sunDirection ) missing.push( 'sunDirection' );
-		if ( ! viewHeightKm ) missing.push( 'viewHeightKm' );
+		if ( ! viewHeightKm && ! cameraPositionKm ) missing.push( 'viewHeightKm or cameraPositionKm' );
 		if ( ! transmittanceLUT ) missing.push( 'transmittanceLUT' );
 		if ( ! multiScatterLUT ) missing.push( 'multiScatterLUT' );
 		if ( ! cameraWorldUniform ) missing.push( 'cameraWorldUniform' );
@@ -241,6 +250,26 @@ export function createHazeOutputNode( {
 		// transition visible in `?debug=beyond`.
 		const beyondCoverage = distKm.greaterThan( float( coverageKm ) );
 
+		// Haze policy:
+		// 0 = auto hybrid, 1 = AP-first, 2 = force raymarch. Default is 1 to
+		// preserve older callers unless they explicitly opt into policy blending.
+		const hazeMode = hazeModeUniform || float( 1.0 );
+		const blendStartKm = raymarchBlendStartKm || float( 50.0 );
+		const blendEndKm = max( raymarchBlendEndKm || float( 100.0 ), blendStartKm.add( 0.001 ) );
+		const coverageBlendKm = max( raymarchCoverageBlendKm || float( 128.0 ), float( 0.001 ) );
+		const cameraAltitudeKm = atmosphereUniforms
+			? ( cameraPositionKm
+				? length( cameraPositionKm ).sub( atmosphereUniforms.bottomRadius )
+				: ( viewHeightKm ? viewHeightKm.sub( atmosphereUniforms.bottomRadius ) : float( 0.0 ) ) )
+			: float( 0.0 );
+		const altitudeWeight = smoothstep( blendStartKm, blendEndKm, cameraAltitudeKm );
+		const coverageWeight = smoothstep( float( coverageKm ).sub( coverageBlendKm ), float( coverageKm ), distKm );
+		const autoWeight = max( altitudeWeight, coverageWeight );
+		const apWeight = beyondCoverage.select( float( 1.0 ), float( 0.0 ) );
+		const isRaymarchMode = hazeMode.greaterThan( float( 1.5 ) );
+		const isApMode = hazeMode.greaterThan( float( 0.5 ) ).and( hazeMode.lessThan( float( 1.5 ) ) );
+		const policyWeight = isRaymarchMode.select( float( 1.0 ), isApMode.select( apWeight, autoWeight ) );
+
 		// "Force raymarch for every geometry pixel" — manual orbit-altitude
 		// override. The AP LUT's voxel parameterization is keyed to the
 		// camera's frustum and assumes the camera sits inside the atmosphere
@@ -253,9 +282,10 @@ export function createHazeOutputNode( {
 		const forceRaymarch = raymarchOnlyUniform
 			? raymarchOnlyUniform.greaterThan( float( 0.5 ) )
 			: null;
-		const useRaymarch = forceRaymarch
-			? beyondCoverage.or( forceRaymarch )
-			: beyondCoverage;
+		const raymarchWeight = forceRaymarch
+			? forceRaymarch.select( float( 1.0 ), policyWeight )
+			: policyWeight;
+		const useRaymarch = raymarchWeight.greaterThan( float( 0.0 ) );
 
 		// Debug bisection — JS-side mode select (compiles to one branch).
 		if ( debugMode === 'ap-rgb' ) return vec4( ap.rgb.mul( luminanceScale ).mul( 5.0 ), 1.0 );
@@ -305,7 +335,7 @@ export function createHazeOutputNode( {
 				// is dropped — at planet scale the difference is invisible
 				// (atmosphere is symmetric around the centre) and matches the
 				// convention the sky mesh's space-view fallback uses.
-				const camPos = vec3( float( 0.0 ), viewHeightKm, float( 0.0 ) );
+				const camPos = cameraPositionKm || vec3( float( 0.0 ), viewHeightKm, float( 0.0 ) );
 				const moved = moveToTopAtmosphere( camPos, worldDir, atmosphereUniforms );
 				const startPos = moved.newPos.toVar();
 
@@ -356,8 +386,8 @@ export function createHazeOutputNode( {
 				const rmA = hazeStrength !== null ? rmAlpha.mul( hazeStrength ) : rmAlpha;
 				const rmRgbScaled = hazeStrength !== null ? rmRgb.mul( hazeStrength ) : rmRgb;
 
-				apA.assign( rmA );
-				apRgbScaled.assign( rmRgbScaled );
+				apA.assign( mix( apA, rmA, raymarchWeight ) );
+				apRgbScaled.assign( mix( apRgbScaled, rmRgbScaled, raymarchWeight ) );
 				rmDebugRgb.assign( rmRgbScaled );
 				rmDebugAlpha.assign( rmA );
 

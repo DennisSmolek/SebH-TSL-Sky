@@ -227,10 +227,9 @@ export class SkyAtmosphereMesh extends Mesh {
 			const lightOnPlaneLen = max( length( vec2( lightOnPlaneX, lightOnPlaneY ) ), float( 1e-6 ) );
 			const lightViewCosAngle = clamp( lightOnPlaneX.div( lightOnPlaneLen ), float( - 1.0 ), float( 1.0 ) );
 
-			// Ground intersection test (planet at origin in Y-up; camera at
-			// (0, viewHeight, 0)).
+			// Ground intersection test (planet at origin, camera along local up).
 			const earthO = vec3( 0.0, 0.0, 0.0 );
-			const ro = vec3( float( 0.0 ), viewHeight, float( 0.0 ) );
+			const ro = upVec.mul( viewHeight );
 			const tPlanet = raySphereIntersectNearest( ro, viewDir, earthO, params.bottomRadius );
 			const intersectsGround = tPlanet.greaterThanEqual( float( 0.0 ) );
 
@@ -258,8 +257,8 @@ export class SkyAtmosphereMesh extends Mesh {
 				} ).Else( () => {
 
 					// Phase 3 — space-view raymarch fallback.
-					// Camera position in planet-centred Y-up frame.
-					const camPos = vec3( float( 0.0 ), viewHeight, float( 0.0 ) );
+					// Camera position in planet-centred frame.
+					const camPos = upVec.mul( viewHeight );
 
 					// Clip the ray origin to the atmosphere boundary; if the ray
 					// misses entirely the result stays at zero.

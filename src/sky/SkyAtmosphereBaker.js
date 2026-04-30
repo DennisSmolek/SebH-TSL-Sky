@@ -163,6 +163,9 @@ export class SkyAtmosphereBaker {
 		// Camera handle, set by setCamera(). Used to refresh per-frame uniforms
 		// (viewHeight on SkyView/mesh; matrices on AP LUT).
 		this._camera = null;
+		this._cameraPositionKm = new Vector3( 0.0, this.atmosphereUniforms.bottomRadius.value + 0.001, 0.0 );
+		this._cameraUp = new Vector3( 0.0, 1.0, 0.0 );
+		this._cameraAltitudeM = 1.0;
 
 	}
 
@@ -185,6 +188,24 @@ export class SkyAtmosphereBaker {
 
 	}
 
+	get cameraPositionKm() {
+
+		return this._cameraPositionKm;
+
+	}
+
+	get cameraAltitudeM() {
+
+		return this._cameraAltitudeM;
+
+	}
+
+	get cameraUp() {
+
+		return this._cameraUp;
+
+	}
+
 	/**
 	 * Phase 2: bind the main scene camera. Updates viewHeight on the
 	 * Sky-View LUT and mesh (so altitude is reflected in the sky), and
@@ -195,24 +216,41 @@ export class SkyAtmosphereBaker {
 	 * separate `updateAerialPerspective()` since it needs to fire every frame
 	 * regardless of any flags.
 	 */
-	setCamera( camera ) {
+	setCamera( camera, { planetCenter = null } = {} ) {
 
 		this._camera = camera;
 		camera.updateMatrixWorld();
 
-		// Atmosphere-frame camera height: planet centre to camera (Y-up world,
-		// converting from m to km). Horizontal position is ignored — at
-		// ground-level scales the planet curvature isn't perceptible.
-		const camYm = camera.position.y;
 		const bottomR = this.atmosphereUniforms.bottomRadius.value;
-		const viewHeightKm = bottomR + camYm * 0.001;
+		const bottomRadiusM = bottomR * 1000.0;
+		let viewHeightKm;
+
+		if ( planetCenter ) {
+
+			const cameraFromCenterM = camera.position.clone().sub( planetCenter );
+			const cameraRadiusM = cameraFromCenterM.length();
+			viewHeightKm = cameraRadiusM * 0.001;
+			this._cameraAltitudeM = cameraRadiusM - bottomRadiusM;
+			this._cameraUp.copy( cameraFromCenterM ).normalize();
+			this._cameraPositionKm.copy( cameraFromCenterM ).multiplyScalar( 0.001 );
+
+		} else {
+
+			// Backwards-compatible flat-ground convention: y = altitude in metres.
+			viewHeightKm = bottomR + camera.position.y * 0.001;
+			this._cameraAltitudeM = camera.position.y;
+			this._cameraUp.set( 0.0, 1.0, 0.0 );
+			this._cameraPositionKm.set( 0.0, viewHeightKm, 0.0 );
+
+		}
 
 		this.skyViewLUT.viewHeight = viewHeightKm;
 		this.sky.viewHeight.value = viewHeightKm;
+		this.sky.upVector.value.copy( this._cameraUp );
 
 		if ( this.aerialPerspectiveLUT ) {
 
-			this.aerialPerspectiveLUT.setCamera( camera );
+			this.aerialPerspectiveLUT.setCamera( camera, { planetCenter } );
 
 		}
 

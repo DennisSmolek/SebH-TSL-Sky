@@ -12,10 +12,12 @@ import {
 	abs,
 	max,
 	min,
+	length,
 	If,
 	dot,
 	fract,
 	sin,
+	smoothstep,
 	normalize as tslNormalize
 } from 'three/tsl';
 
@@ -43,10 +45,15 @@ export function createHazeDebugOutputNode( {
 	cameraWorldUniform = null,
 	cameraFarUniform = null,
 	logarithmicDepthBuffer = false,
+	hazeModeUniform = null,
+	raymarchBlendStartKm = null,
+	raymarchBlendEndKm = null,
+	raymarchCoverageBlendKm = null,
 	enableRaymarchFallback = false,
 	atmosphereUniforms = null,
 	sunDirection = null,
 	viewHeightKm = null,
+	cameraPositionKm = null,
 	transmittanceLUT = null,
 	multiScatterLUT = null,
 	raymarchOnlyUniform = null,
@@ -64,7 +71,7 @@ export function createHazeDebugOutputNode( {
 		const missing = [];
 		if ( ! atmosphereUniforms ) missing.push( 'atmosphereUniforms' );
 		if ( ! sunDirection ) missing.push( 'sunDirection' );
-		if ( ! viewHeightKm ) missing.push( 'viewHeightKm' );
+		if ( ! viewHeightKm && ! cameraPositionKm ) missing.push( 'viewHeightKm or cameraPositionKm' );
 		if ( ! transmittanceLUT ) missing.push( 'transmittanceLUT' );
 		if ( ! multiScatterLUT ) missing.push( 'multiScatterLUT' );
 		if ( ! cameraWorldUniform ) missing.push( 'cameraWorldUniform' );
@@ -106,12 +113,29 @@ export function createHazeDebugOutputNode( {
 			: linearDepthNode.greaterThan( float( 0.999 ) );
 
 		const beyondCoverage = distKm.greaterThan( float( coverageKm ) );
+		const hazeMode = hazeModeUniform || float( 1.0 );
+		const blendStartKm = raymarchBlendStartKm || float( 50.0 );
+		const blendEndKm = max( raymarchBlendEndKm || float( 100.0 ), blendStartKm.add( 0.001 ) );
+		const coverageBlendKm = max( raymarchCoverageBlendKm || float( 128.0 ), float( 0.001 ) );
+		const cameraAltitudeKm = atmosphereUniforms
+			? ( cameraPositionKm
+				? length( cameraPositionKm ).sub( atmosphereUniforms.bottomRadius )
+				: ( viewHeightKm ? viewHeightKm.sub( atmosphereUniforms.bottomRadius ) : float( 0.0 ) ) )
+			: float( 0.0 );
+		const altitudeWeight = smoothstep( blendStartKm, blendEndKm, cameraAltitudeKm );
+		const coverageWeight = smoothstep( float( coverageKm ).sub( coverageBlendKm ), float( coverageKm ), distKm );
+		const autoWeight = max( altitudeWeight, coverageWeight );
+		const apWeight = beyondCoverage.select( float( 1.0 ), float( 0.0 ) );
+		const isRaymarchMode = hazeMode.greaterThan( float( 1.5 ) );
+		const isApMode = hazeMode.greaterThan( float( 0.5 ) ).and( hazeMode.lessThan( float( 1.5 ) ) );
+		const policyWeight = isRaymarchMode.select( float( 1.0 ), isApMode.select( apWeight, autoWeight ) );
 		const forceRaymarch = raymarchOnlyUniform
 			? raymarchOnlyUniform.greaterThan( float( 0.5 ) )
 			: null;
-		const useRaymarch = forceRaymarch
-			? beyondCoverage.or( forceRaymarch )
-			: beyondCoverage;
+		const raymarchWeight = forceRaymarch
+			? forceRaymarch.select( float( 1.0 ), policyWeight )
+			: policyWeight;
+		const useRaymarch = raymarchWeight.greaterThan( float( 0.0 ) );
 
 		const hash01 = fract( sin( dot( u, vec2( 12.9898, 78.233 ) ) ).mul( 43758.5453 ) );
 
@@ -177,7 +201,7 @@ export function createHazeDebugOutputNode( {
 
 				const worldDirRaw = cameraWorldUniform.mul( vec4( rayDirView, float( 0.0 ) ) ).xyz;
 				const worldDir = tslNormalize( worldDirRaw ).toVar();
-				const camPos = vec3( float( 0.0 ), viewHeightKm, float( 0.0 ) );
+				const camPos = cameraPositionKm || vec3( float( 0.0 ), viewHeightKm, float( 0.0 ) );
 				const moved = moveToTopAtmosphere( camPos, worldDir, atmosphereUniforms );
 				const startPos = moved.newPos.toVar();
 				const distKmVar = distKm.toVar();
@@ -230,8 +254,8 @@ export function createHazeDebugOutputNode( {
 				const rmA = hazeStrength !== null ? rmAlpha.mul( hazeStrength ) : rmAlpha;
 				const rmRgbScaled = hazeStrength !== null ? rmRgb.mul( hazeStrength ) : rmRgb;
 
-				apA.assign( rmA );
-				apRgbScaled.assign( rmRgbScaled );
+				apA.assign( mix( apA, rmA, raymarchWeight ) );
+				apRgbScaled.assign( mix( apRgbScaled, rmRgbScaled, raymarchWeight ) );
 				rmDebugRgb.assign( rmRgbScaled );
 				rmDebugAlpha.assign( rmA );
 				rmDebugTransmittance.assign( rmMeanTransmittance.mul( validF ) );

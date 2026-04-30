@@ -23,9 +23,11 @@ Three distinct raymarch contexts in Hillaire's pipeline. Conflating them is the 
 |---|---|---|---|
 | **LUT generation** | rays through atmosphere math, inside a fullscreen fragment pass writing into a RenderTarget | the LUT textures | on sun / param change (for our baked use case) |
 | **Sky shading** | nothing — sample Sky-View LUT by direction | sky-pixel color | per sky pixel |
-| **Aerial perspective on geometry** *(phase 2)* | nothing — sample AP 3D LUT by depth-reconstructed world position | haze blended onto scene pixels | per scene pixel, post-process |
+| **Aerial perspective LUT generation** *(phase 2)* | camera-frustum froxel rays through atmosphere math | AP 3D LUT RGB + alpha | per frame while camera moves |
+| **Aerial perspective on geometry** *(phase 2)* | usually nothing — sample AP 3D LUT by depth-reconstructed world position | haze blended onto scene pixels | per scene pixel, post-process |
+| **Planet-scale AP fallback** *(phase 3 bridge)* | camera-to-surface ray for pixels outside AP coverage, or when a debug/quality policy forces it | finite-path inscatter + transmittance | per scene pixel, post-process |
 
-In steady-state rendering the only raymarches happen inside the tiny LUT generation passes; everything else is texture sampling. The "mountain haze fade" you asked about is the aerial-perspective 3D-LUT sample against the depth buffer, applied as a post-process over the main scene — not bakeable into an envmap, which is why it's phase 2.
+In the ground-level steady state, the only raymarches happen inside LUT generation passes; geometry haze normally samples the AP 3D LUT. Planet-scale views add an explicit per-pixel raymarch fallback for geometry past the AP volume coverage (and for debug / high-quality overrides). The "mountain haze fade" you asked about is still the aerial-perspective depth post-process over the main scene — not bakeable into an envmap, which is why it started as phase 2.
 
 ---
 
@@ -278,3 +280,47 @@ Required sub-tasks (rough):
    `scene.depth` + `scene.color`, samples AP LUT, blends.
 4. Demo upgrade to `examples/03-aerial-perspective.html` with a terrain
    mesh in the foreground so the haze is actually visible on something.
+
+---
+
+## Phase 2 / 3 bridge — Status (in progress)
+
+AP and planet-scale support now exist beyond the original phase-2 entry point:
+
+- `src/sky/luts/AerialPerspectiveLUT.js` builds a camera-frustum 3D LUT each
+  frame when AP is enabled.
+- `src/sky/HazePostProcess.js` applies AP to scene geometry and includes a
+  per-pixel raymarch fallback for planet-scale pixels beyond AP coverage.
+- `src/sky/hazeScenePassDepth.js` decodes pass depth correctly for both normal
+  and logarithmic depth buffers. When `WebGPURenderer({ logarithmicDepthBuffer:
+  true })` is used, haze consumers must decode with `logarithmicDepthToViewZ`;
+  `PassNode.getViewZNode()` assumes perspective depth and corrupts distance
+  reconstruction.
+- `examples/05-planet-scale.html` is the stable planet-scale integration page.
+- `examples/06-planet-scale-debug.html` is the isolated debug harness for
+  AP/raymarch diagnostics and should remain free to expose low-level controls.
+
+### Planet-scale cleanup milestone
+
+This milestone aligns the demo and baker math with a true spherical planet:
+
+1. **Camera altitude** — derive altitude from distance to the planet centre,
+   not `camera.position.y`. `SkyAtmosphereBaker.setCamera()` and
+   `AerialPerspectiveLUT.setCamera()` must receive enough planet-frame context
+   to compute camera position in kilometres.
+2. **Camera controls** — use `camera-controls` in planet-scale pages for better
+   interaction, smoother transitions, and collision / constraint hooks. Keep an
+   explicit minimum-altitude clamp so the camera cannot go below the ground.
+3. **Spherical demo geometry** — attach mountains to the sphere surface and
+   orient them along the local normal instead of placing them on the old flat
+   plane.
+4. **AP / raymarch policy** — retire `raymarchOnly` as a user-facing concept.
+   Stable pages should expose a configurable haze policy:
+   - `auto`: default hybrid mode, smoothly blending AP LUT output toward
+     per-pixel raymarch at high altitude / poor AP coverage.
+   - `ap`: ground-biased fast path; AP in range, raymarch only past coverage.
+   - `raymarch`: force per-pixel raymarch for validation and high-quality use.
+   - `hybrid-custom`: expose blend thresholds for users who need control.
+
+Debug pages may keep `raymarchOnly` and raw integrator controls as explicit
+diagnostic overrides.

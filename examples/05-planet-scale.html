@@ -23,14 +23,24 @@
 		</div>
 		<script type="module">
 			import * as THREE from 'three/webgpu';
+			import CameraControls from 'camera-controls';
 			import { Inspector } from 'three/addons/inspector/Inspector.js';
-			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 			import { pass, uniform } from 'three/tsl';
 
 			import { SkyAtmosphereBaker } from '/src/sky/SkyAtmosphereBaker.js';
 			import { createHazeOutputNode } from '/src/sky/HazePostProcess.js';
 			import { createStartGate, logStage } from '/src/demo/startGate.js';
+			import {
+				clampCameraToMinAltitude,
+				createPlanetSurfacePatchGeometry,
+				getPlanetCameraFrame,
+				getPlanetAltitudeM,
+				getPlanetLookAtTarget,
+				placeObjectOnPlanetSurface
+			} from '/src/demo/planetScaleUtils.js';
+
+			CameraControls.install( { THREE } );
 
 			const _q = new URLSearchParams( window.location.search );
 			const debugMode = _q.get( 'debug' );
@@ -59,6 +69,16 @@
 			// the ground-level demo. That's why 04 keeps the default 8 and 05
 			// is a separate page.
 			const AP_KM_PER_SLICE = 32.0;
+			const MIN_CAMERA_ALTITUDE = 25.0;
+			const INITIAL_CAMERA_ALTITUDE = 200.0;
+			const INITIAL_LOOK_DISTANCE_M = 50_000.0;
+			const LOCAL_GROUND_PATCH_RADIUS_M = 140_000.0;
+			const LOCAL_GROUND_PATCH_OFFSET_M = 2.0;
+			const HAZE_MODES = {
+				auto: 0,
+				ap: 1,
+				raymarch: 2
+			};
 
 			const gate = createStartGate( {
 				label: 'Start Planet-scale demo',
@@ -91,8 +111,8 @@
 				// looking down from orbit. Earth radius ≈ 6.36 Mm so 20 Mm
 				// comfortably covers the diameter plus altitude headroom.
 				const camera = new THREE.PerspectiveCamera( 60, window.innerWidth / window.innerHeight, 1, 20_000_000 );
-				camera.position.set( 0, 200, 0 );
-				camera.lookAt( 0, 200, 1000 );
+				camera.position.set( 0, INITIAL_CAMERA_ALTITUDE, 0 );
+				camera.lookAt( 0, INITIAL_CAMERA_ALTITUDE, INITIAL_LOOK_DISTANCE_M );
 
 				const baker = await logStage( 'SkyAtmosphereBaker', async () => {
 
@@ -131,13 +151,25 @@
 				// but reveals planetary curvature from altitude. Centred at
 				// (0, -bottomRadius_m, 0) so the surface sits at y = 0.
 				const bottomRadiusM = baker.atmosphereParams.bottomRadius * 1000;
+				const planetCenter = new THREE.Vector3( 0, - bottomRadiusM, 0 );
 				const groundMat = new THREE.MeshStandardMaterial( { color: 0x6a6055, roughness: 0.95, metalness: 0.0 } );
 				const ground = new THREE.Mesh(
 					new THREE.SphereGeometry( bottomRadiusM, 128, 64 ),
 					groundMat
 				);
-				ground.position.y = - bottomRadiusM;
+				ground.position.copy( planetCenter );
 				scene.add( ground );
+
+				const localGround = new THREE.Mesh(
+					createPlanetSurfacePatchGeometry( {
+						bottomRadiusM,
+						patchRadiusM: LOCAL_GROUND_PATCH_RADIUS_M,
+						patchAltitudeM: LOCAL_GROUND_PATCH_OFFSET_M
+					} ),
+					groundMat
+				);
+				localGround.position.copy( planetCenter );
+				scene.add( localGround );
 
 				const sunLight = new THREE.DirectionalLight( 0xffffff, 4.0 );
 				scene.add( sunLight );
@@ -162,7 +194,14 @@
 					const m = new THREE.Mesh( mountainGeom, mountainMat );
 					const h = 400 + Math.random() * 400;
 					m.scale.set( 600, h, 600 );
-					m.position.set( Math.sin( angle ) * dist, h / 2, Math.cos( angle ) * dist );
+					placeObjectOnPlanetSurface( m, {
+						planetCenter,
+						bottomRadiusM,
+						distanceM: dist,
+						bearingRad: angle,
+						heightM: h,
+						baseOffsetM: h * 0.5 + LOCAL_GROUND_PATCH_OFFSET_M
+					} );
 					scene.add( m );
 
 				}
@@ -173,16 +212,42 @@
 					const m = new THREE.Mesh( mountainGeom, mountainMat );
 					const h = 1500;
 					m.scale.set( 1500, h, 1500 );
-					m.position.set( Math.sin( angle ) * dist, h / 2, Math.cos( angle ) * dist );
+					placeObjectOnPlanetSurface( m, {
+						planetCenter,
+						bottomRadiusM,
+						distanceM: dist,
+						bearingRad: angle,
+						heightM: h,
+						baseOffsetM: h * 0.5 + LOCAL_GROUND_PATCH_OFFSET_M
+					} );
 					scene.add( m );
 
 				}
 
-				const controls = new OrbitControls( camera, renderer.domElement );
-				controls.target.set( 0, 200, 1000 );
-				controls.enableDamping = true;
-				controls.minDistance = 10;
-				controls.maxDistance = 1_000_000;
+				const clock = new THREE.Clock();
+				const cameraControls = new CameraControls( camera, renderer.domElement );
+				const cameraTarget = getPlanetLookAtTarget( {
+					position: camera.position,
+					planetCenter,
+					bottomRadiusM,
+					distanceM: INITIAL_LOOK_DISTANCE_M
+				} );
+				cameraControls.setLookAt(
+					camera.position.x, camera.position.y, camera.position.z,
+					cameraTarget.x, cameraTarget.y, cameraTarget.z,
+					false
+				);
+				cameraControls.minDistance = 100;
+				cameraControls.maxDistance = 8_000_000;
+				cameraControls.smoothTime = 0.12;
+				cameraControls.draggingSmoothTime = 0.04;
+				cameraControls.azimuthRotateSpeed = 2.5;
+				cameraControls.polarRotateSpeed = 2.0;
+				cameraControls.dollySpeed = 2.0;
+				cameraControls.truckSpeed = 80.0;
+				cameraControls.dollyToCursor = true;
+				cameraControls.infinityDolly = true;
+				cameraControls.colliderMeshes = [ localGround ];
 
 				markStage( 4, 'running' );
 
@@ -190,17 +255,16 @@
 				const luminanceScaleU = baker.sky.luminanceScale;
 				const invProjU = uniform( camera.projectionMatrixInverse.clone() );
 				const cameraWorldU = uniform( camera.matrixWorld.clone() );
+				const cameraPositionKmU = uniform( baker.cameraPositionKm.clone() );
 				// camera.far is large (20 Mm) for orbit views; opt-in to
 				// the viewZ-based sky-pixel test so AP doesn't double up
 				// the sky-mesh's gradient at the top of the screen.
 				const cameraFarU = uniform( camera.far );
 				const hazeStrengthU = uniform( 1.0 );
-				// 0 = use AP LUT for in-coverage geometry (fast path).
-				// 1 = bypass the LUT entirely; every geometry pixel goes through
-				// per-pixel `integrateScatteredLuminance`. Useful at orbit
-				// altitude where the LUT's frustum-aligned voxel grid produces
-				// directional coverage holes.
-				const raymarchOnlyU = uniform( 0.0 );
+				const hazeModeU = uniform( HAZE_MODES.auto );
+				const raymarchBlendStartKmU = uniform( 50.0 );
+				const raymarchBlendEndKmU = uniform( 100.0 );
+				const raymarchCoverageBlendKmU = uniform( 128.0 );
 
 				const renderPipeline = new THREE.RenderPipeline( renderer );
 				renderPipeline.outputNode = createHazeOutputNode( {
@@ -211,6 +275,10 @@
 					cameraWorldUniform: cameraWorldU,
 					cameraFarUniform: cameraFarU,
 					logarithmicDepthBuffer: useLogDepth,
+					hazeModeUniform: hazeModeU,
+					raymarchBlendStartKm: raymarchBlendStartKmU,
+					raymarchBlendEndKm: raymarchBlendEndKmU,
+					raymarchCoverageBlendKm: raymarchCoverageBlendKmU,
 					hazeStrength: hazeStrengthU,
 					kmPerSlice: AP_KM_PER_SLICE,
 					// Per-pixel raymarch fallback — geometry past 1024 km integrates
@@ -221,9 +289,9 @@
 					atmosphereUniforms: baker.atmosphereUniforms,
 					sunDirection: baker.sky.sunDirection,
 					viewHeightKm: baker.sky.viewHeight,
+					cameraPositionKm: cameraPositionKmU,
 					transmittanceLUT: baker.transmittanceLUT.texture,
 					multiScatterLUT: baker.multiScatterLUT.texture,
-					raymarchOnlyUniform: raymarchOnlyU,
 					debugMode
 				} );
 
@@ -231,7 +299,7 @@
 				const eff = {
 					sunElevation: 8,
 					sunAzimuth: 0,
-					cameraAltitude: 200,
+					cameraAltitude: INITIAL_CAMERA_ALTITUDE,
 					exposure: 0.5,
 					hazeStrength: 1.0,
 					hazeOn: true,
@@ -246,29 +314,47 @@
 					//                surface renders without atmospheric haze; the
 					//                sky-mesh still draws.
 					skyMeshOn: true,
-					// Bypass the AP LUT and raymarch every geometry pixel. The LUT
-					// is fast and accurate at ground level, but its voxel
-					// parameterization breaks down at altitude on off-axis views.
-					hazeRaymarchOnly: false,
+					hazeMode: 'auto',
+					blendStartKm: 50.0,
+					blendEndKm: 100.0,
+					coverageBlendKm: 128.0,
 					// PMREM IBL on the planet surface. Off → surface lit by
 					// directional sun only, useful for isolating raymarch
 					// artefacts from IBL contributions.
 					iblOn: true
 				};
+				const setCameraAltitude = ( altitudeM, enableTransition = true ) => {
+
+					cameraControls.getTarget( cameraTarget );
+					const frame = getPlanetCameraFrame( camera.position, planetCenter, bottomRadiusM );
+					const nextPosition = planetCenter.clone().add( frame.up.multiplyScalar( bottomRadiusM + altitudeM ) );
+					const delta = nextPosition.clone().sub( camera.position );
+					cameraTarget.add( delta );
+					cameraControls.setLookAt(
+						nextPosition.x, nextPosition.y, nextPosition.z,
+						cameraTarget.x, cameraTarget.y, cameraTarget.z,
+						enableTransition
+					);
+
+				};
 				gui.add( eff, 'sunElevation', - 5, 90, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
 				gui.add( eff, 'sunAzimuth', - 180, 180, 0.1 ).onChange( () => { baker.setSun( { elevation: eff.sunElevation, azimuth: eff.sunAzimuth } ); updateSunLight(); } );
-				gui.add( eff, 'cameraAltitude', 1, 500000, 1 ).onChange( () => {
-					const dy = eff.cameraAltitude - camera.position.y;
-					camera.position.y = eff.cameraAltitude;
-					controls.target.y += dy;
-					controls.update();
-				} );
+				const altitudeController = gui.add( eff, 'cameraAltitude', MIN_CAMERA_ALTITUDE, 500000, 1 ).onChange( () => setCameraAltitude( eff.cameraAltitude ) );
+				altitudeController.listen?.();
 				gui.add( eff, 'exposure', 0, 2, 0.01 ).onChange( () => { renderer.toneMappingExposure = eff.exposure; } );
 				gui.add( eff, 'hazeStrength', 0, 3, 0.01 ).onChange( () => { hazeStrengthU.value = eff.hazeOn ? eff.hazeStrength : 0; } );
 				gui.add( eff, 'hazeOn' ).onChange( () => { hazeStrengthU.value = eff.hazeOn ? eff.hazeStrength : 0; } );
 				gui.add( eff, 'skyMeshOn' ).onChange( () => { skyMesh.visible = eff.skyMeshOn; } );
-				gui.add( eff, 'hazeRaymarchOnly' ).onChange( () => { raymarchOnlyU.value = eff.hazeRaymarchOnly ? 1 : 0; } );
 				gui.add( eff, 'iblOn' ).onChange( () => { scene.environment = eff.iblOn ? baker.environmentTexture : null; } );
+				const hazePolicyGui = renderer.inspector.createParameters( 'Haze policy' );
+				hazePolicyGui.add( eff, 'hazeMode', Object.keys( HAZE_MODES ) ).onChange( () => {
+
+					hazeModeU.value = HAZE_MODES[ eff.hazeMode ];
+
+				} );
+				hazePolicyGui.add( eff, 'blendStartKm', 1, 200, 1 ).onChange( () => { raymarchBlendStartKmU.value = eff.blendStartKm; } );
+				hazePolicyGui.add( eff, 'blendEndKm', 1, 250, 1 ).onChange( () => { raymarchBlendEndKmU.value = eff.blendEndKm; } );
+				hazePolicyGui.add( eff, 'coverageBlendKm', 1, 512, 1 ).onChange( () => { raymarchCoverageBlendKmU.value = eff.coverageBlendKm; } );
 
 				window.addEventListener( 'resize', () => {
 
@@ -282,15 +368,36 @@
 
 				renderer.setAnimationLoop( async () => {
 
-					controls.update();
+					const delta = clock.getDelta();
+					cameraControls.update( delta );
+					cameraControls.getTarget( cameraTarget );
+
+					const unclampedAltitude = getPlanetAltitudeM( camera.position, planetCenter, bottomRadiusM );
+					eff.cameraAltitude = clampCameraToMinAltitude( {
+						camera,
+						target: cameraTarget,
+						planetCenter,
+						bottomRadiusM,
+						minAltitudeM: MIN_CAMERA_ALTITUDE
+					} );
+					if ( eff.cameraAltitude !== unclampedAltitude ) {
+
+						cameraControls.setLookAt(
+							camera.position.x, camera.position.y, camera.position.z,
+							cameraTarget.x, cameraTarget.y, cameraTarget.z,
+							false
+						);
+
+					}
 
 					// Sky-mesh box must follow the camera. RenderPipeline passes
 					// don't trigger onBeforeRender consistently, so set it here.
 					skyMesh.position.copy( camera.position );
 
-					baker.setCamera( camera );
+					baker.setCamera( camera, { planetCenter } );
 					invProjU.value.copy( camera.projectionMatrixInverse );
 					cameraWorldU.value.copy( camera.matrixWorld );
+					cameraPositionKmU.value.copy( baker.cameraPositionKm );
 
 					try {
 
