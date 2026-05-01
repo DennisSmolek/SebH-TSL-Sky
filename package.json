@@ -1,8 +1,12 @@
 {
-  "name": "sebh-tsl-sky",
+  "name": "tsl-sky",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./react": "./src/react/index.js"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -11,6 +15,14 @@
   "dependencies": {
     "camera-controls": "^3.1.2",
     "three": "^0.184.0"
+  },
+  "peerDependencies": {
+    "@react-three/fiber": ">=10.0.0-0",
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@react-three/fiber": { "optional": true },
+    "react": { "optional": true }
   },
   "devDependencies": {
     "vite": "^5.4.0"

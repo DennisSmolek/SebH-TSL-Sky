@@ -123,6 +123,15 @@ export class SkyAtmosphereMesh extends Mesh {
 		this.sunIntensity = uniform( 20.0 );
 
 		/**
+		 * Sun-disc angular *diameter* in radians. Stored as `cos(diameter)` for
+		 * the smoothstep test. Default ~0.535° matches the Sun seen from Earth.
+		 * Updated via `setSunAngularDiameter(rad)`.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.sunDiscCos = uniform( Math.cos( 0.004675 ) );
+
+		/**
 		 * Camera viewHeight (km, planet-centred). Drives the SkyView LUT UV
 		 * un-map AND the ground-intersect ray origin. Defaults to ground+ε;
 		 * the baker's `setCamera()` updates this each frame for phase 2.
@@ -196,6 +205,7 @@ export class SkyAtmosphereMesh extends Mesh {
 		const upU = this.upVector;
 		const showSunDiscU = this.showSunDisc;
 		const sunIntensityU = this.sunIntensity;
+		const sunDiscCosU = this.sunDiscCos;
 		const luminanceScaleU = this.luminanceScale;
 		const viewHeightU = this.viewHeight;
 
@@ -296,12 +306,12 @@ export class SkyAtmosphereMesh extends Mesh {
 
 			}
 
-			// Sun disc — same in both paths. cos(angularDiameter) smoothstep.
-			const sunAngularDiameterCos = float( 0.9999890834 ); // cos(0.004675)
+			// Sun disc — same in both paths. cos(angularDiameter) smoothstep,
+			// driven by the `sunDiscCos` uniform so callers can size the disc.
 			const cosSun = dot( viewDir, sunDir );
 			const sunDiscMask = smoothstep(
-				sunAngularDiameterCos,
-				sunAngularDiameterCos.add( float( 0.00002 ) ),
+				sunDiscCosU,
+				sunDiscCosU.add( float( 0.00002 ) ),
 				cosSun
 			).mul( showSunDiscU );
 

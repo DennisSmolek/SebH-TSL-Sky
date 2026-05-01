@@ -135,6 +135,27 @@ export class AerialPerspectiveLUT {
 
 	}
 
+	/** Camera inverse-projection uniform — kept in sync by `setCamera()`. */
+	get invProjUniform() {
+
+		return this._invProj;
+
+	}
+
+	/** Camera world-matrix uniform — kept in sync by `setCamera()`. */
+	get cameraWorldUniform() {
+
+		return this._cameraMatrixWorld;
+
+	}
+
+	/** Camera position (km, planet-centred) uniform — kept in sync by `setCamera()`. */
+	get cameraPositionKmUniform() {
+
+		return this._cameraPosKm;
+
+	}
+
 	/**
 	 * Set the sun direction (Y-up world space, normalized). The same vector you
 	 * pass to `SkyAtmosphereBaker.setSun(...)` works here.
