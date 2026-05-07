@@ -1,22 +1,62 @@
 {
   "name": "tsl-sky",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.1",
+  "description": "Production-quality Hillaire atmospheric sky for Three.js / TSL on the WebGPU renderer. Drop-in vanilla and React (R3F) entries.",
   "type": "module",
   "exports": {
     ".": "./src/index.js",
-    "./react": "./src/react/index.js"
+    "./react": "./src/react/index.js",
+    "./react/auto-haze": "./src/react/AutoHaze.jsx"
+  },
+  "main": "./src/index.js",
+  "files": [
+    "src/index.js",
+    "src/Sky.js",
+    "src/applyHaze.js",
+    "src/presets.js",
+    "src/solarPosition.js",
+    "src/react",
+    "src/sky/AtmosphereParams.js",
+    "src/sky/AtmosphereUniforms.js",
+    "src/sky/HazePostProcess.js",
+    "src/sky/hazeScenePassDepth.js",
+    "src/sky/SkyAtmosphereBaker.js",
+    "src/sky/SkyAtmosphereMesh.js",
+    "src/sky/luts",
+    "src/sky/shaders",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "three",
+    "threejs",
+    "webgpu",
+    "tsl",
+    "sky",
+    "atmosphere",
+    "hillaire",
+    "scattering",
+    "aerial-perspective",
+    "r3f",
+    "react-three-fiber"
+  ],
+  "license": "MIT",
+  "author": "Dennis Smolek <dennis@smolek.dev>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DennisSmolek/SebH-TSL-Sky.git"
+  },
+  "homepage": "https://github.com/DennisSmolek/SebH-TSL-Sky#readme",
+  "bugs": {
+    "url": "https://github.com/DennisSmolek/SebH-TSL-Sky/issues"
   },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
-  "dependencies": {
-    "camera-controls": "^3.1.2",
-    "three": "^0.184.0"
-  },
   "peerDependencies": {
+    "three": ">=0.184.0",
     "@react-three/fiber": ">=10.0.0-0",
     "react": ">=18.0.0"
   },
@@ -25,6 +65,11 @@
     "react": { "optional": true }
   },
   "devDependencies": {
+    "camera-controls": "^3.1.2",
+    "three": "^0.184.0",
     "vite": "^5.4.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
