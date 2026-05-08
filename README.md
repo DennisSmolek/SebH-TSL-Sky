@@ -1,0 +1,148 @@
+# tsl-sky
+
+Production-quality atmospheric sky for Three.js / TSL on the WebGPU renderer.
+Port of Sébastien Hillaire's [_A Scalable and Production Ready Sky and
+Atmosphere Rendering Technique_](https://sebh.github.io/publications/egsr2020.pdf)
+(EGSR 2020), with vanilla and React (R3F) entry points.
+
+## Install
+
+```bash
+npm install tsl-sky
+```
+
+Peer-deps: `three` (≥0.184), and optionally `react` + `@react-three/fiber`
+(≥10.0.0-alpha) if you use the React bindings. Requires the WebGPU renderer.
+
+## Vanilla
+
+```js
+import * as THREE from 'three/webgpu';
+import { pass } from 'three/tsl';
+import { Sky } from 'tsl-sky';
+
+const renderer = new THREE.WebGPURenderer({ antialias: true });
+await renderer.init();
+
+const sky = new Sky(renderer, {
+  preset: 'earth',     // 'earth' | 'mars' | 'titan'
+  timeOfDay: 14.5,     // 0..24
+  latitude: 37.7,
+  exposure: 40
+});
+
+const scene = new THREE.Scene();
+sky.attach(scene);     // sets scene.environment + scene.background
+
+renderer.setAnimationLoop(() => {
+  sky.update(camera);
+  renderer.render(scene, camera);
+});
+```
+
+### Aerial-perspective haze
+
+```js
+import { pass } from 'three/tsl';
+
+const scenePass = pass(scene, camera);
+const post = new THREE.RenderPipeline(renderer);
+post.outputNode = sky.applyHaze(scenePass.getTextureNode(), {
+  scenePass,
+  policy: 'auto'       // 'auto' | 'ap' | 'raymarch'
+});
+
+renderer.setAnimationLoop(() => {
+  sky.update(camera);
+  sky.updateAerialPerspective();
+  post.render();
+});
+```
+
+## React (R3F)
+
+```jsx
+import { Sky } from 'tsl-sky/react';
+import { AutoHaze } from 'tsl-sky/react/auto-haze';
+
+function Scene() {
+  return (
+    <>
+      <Sky preset="earth" timeOfDay={14.5}>
+        <AutoHaze />
+      </Sky>
+      <Mountains />
+    </>
+  );
+}
+```
+
+`<AutoHaze>` lives in its own sub-export so the `useRenderPipeline` hook it
+depends on is only pulled into bundles that actually need it. R3F builds
+that don't yet export `useRenderPipeline` (e.g. `@react-three/fiber@10.0.0-alpha.2`)
+can still use the plain `<Sky>`; haze becomes available once your R3F build
+includes the hook.
+
+To compose with your own pipeline, skip `<AutoHaze />` and grab the instance
+via `useSky()`:
+
+```jsx
+import { useSky } from 'tsl-sky/react';
+import { useRenderPipeline } from '@react-three/fiber/webgpu';
+
+function CustomPipeline() {
+  const sky = useSky();
+  useRenderPipeline(({ renderPipeline, passes }) => {
+    if (!sky) return;
+    renderPipeline.outputNode = sky.applyHaze(
+      passes.scenePass.getTextureNode(),
+      { scenePass: passes.scenePass, policy: 'auto' }
+    );
+  });
+  return null;
+}
+```
+
+## API
+
+The `Sky` class:
+
+| Method | Description |
+|---|---|
+| `setTimeOfDay(hours)` | NOAA solar position; combined with `latitude` + `dayOfYear` |
+| `setLatitude(deg)` / `setDayOfYear(day)` | Solar position inputs |
+| `setSunDirection({ elevation, azimuth })` | Direct override |
+| `setNorth('+X' \| '-X' \| '+Z' \| '-Z')` | Which world axis is geographic north |
+| `setExposure(n)` | Sky luminance scale (default 40) |
+| `setSunDisc(boolean \| { angularDiameter })` | Disc visibility + size in radians |
+| `setTurbidity(n)` | Mie scattering scalar (1 = Earth) |
+| `setGroundAlbedo(n \| Vector3)` | Multi-scatter LUT input |
+| `setPreset('earth' \| 'mars' \| 'titan')` | Swap atmosphere defaults |
+| `setAtmosphere(partial)` | Direct atmosphere-params override |
+| `setHazeStrength(n)` / `setHazePolicy(p)` / `setHazeAltitudeBlend({startKm, endKm})` | Live haze knobs |
+| `update(camera, { planetCenter? })` | Per-frame; planet-frame altitude when `planetCenter` is set |
+| `updateAerialPerspective()` | Per-frame; required when `applyHaze` is wired |
+| `applyHaze(sceneColorNode, options)` | Returns a `vec4` TSL output node |
+| `attach(scene)` / `detach()` / `dispose()` | Lifecycle |
+
+## Starters
+
+Self-contained Vite projects you can clone and run:
+
+- [`tsl-sky-starters/vanilla`](https://github.com/DennisSmolek/tsl-sky-starters/tree/main/vanilla) — Three.js + Vite
+- [`tsl-sky-starters/r3f`](https://github.com/DennisSmolek/tsl-sky-starters/tree/main/r3f) — React Three Fiber + Vite
+
+```bash
+npx degit DennisSmolek/tsl-sky-starters/vanilla my-sky-app
+# or
+npx degit DennisSmolek/tsl-sky-starters/r3f my-sky-app
+```
+
+## Status
+
+Phase 1 (baked sky), Phase 2 (aerial perspective), and Phase 3 (planet-scale
+ground→orbit) are functional. Volumetric clouds and god-rays are out of scope.
+
+## License
+
+MIT © Dennis Smolek
