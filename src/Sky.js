@@ -2,6 +2,9 @@ import { Vector3 } from 'three/webgpu';
 import { uniform } from 'three/tsl';
 
 import { SkyAtmosphereBaker } from './sky/SkyAtmosphereBaker.js';
+import { SkyGround } from './sky/SkyGround.js';
+import { SkyNight } from './sky/SkyNight.js';
+import { SkySun } from './sky/SkySun.js';
 import { mergeAtmosphereParams } from './sky/AtmosphereParams.js';
 import { LUT_RESOLUTIONS } from './sky/luts/resolutions.js';
 import { presets, resolvePreset } from './presets.js';
@@ -377,6 +380,103 @@ export class Sky {
 		if ( typeof startKm === 'number' && this._hazeAltStart ) this._hazeAltStart.value = startKm;
 		if ( typeof endKm === 'number' && this._hazeAltEnd ) this._hazeAltEnd.value = endKm;
 		return this;
+
+	}
+
+	/**
+	 * Convenience: build a `SkySun` bound to this Sky. The returned instance
+	 * owns a `THREE.DirectionalLight` that auto-tracks every `setSunDirection`
+	 * / `baker.setSun` via the baker's listener hook. Call `sun.attach(scene)`.
+	 */
+	createSun( opts ) {
+
+		return new SkySun( this, opts );
+
+	}
+
+	/**
+	 * Convenience: build a `SkyGround` bound to this Sky. Sphere mode auto-sizes
+	 * from `baker.atmosphereParams.bottomRadius`. Call `ground.attach(scene)`.
+	 */
+	createGround( opts ) {
+
+		return new SkyGround( this, opts );
+
+	}
+
+	/**
+	 * Opt into the night-sky stars layer. Default source is `'procedural'` —
+	 * a shader-generated starfield with zero asset cost. Pass
+	 * `{ source: 'hdri', url }` (or `{ texture }`) to use a real HDR sky
+	 * map for a photoreal Milky Way look.
+	 *
+	 * Stars fade naturally with twilight (attenuated by camera→space
+	 * transmittance) and flow into the IBL automatically via the cube bake.
+	 *
+	 * Returns the `SkyNight` instance for further control (`setIntensity`,
+	 * `setSource`, `setDensity`, `setBrightness`, `setRotation`, `disable`,
+	 * `dispose`). Idempotent — calling again updates in place.
+	 *
+	 * @param {object} [opts] see `SkyNight.enable` for full schema.
+	 * @returns {Promise<SkyNight>}
+	 */
+	async enableStars( opts ) {
+
+		if ( ! this._night ) this._night = new SkyNight( this );
+		await this._night.enable( opts );
+		return this._night;
+
+	}
+
+	/**
+	 * Hide stars without unloading the texture. Re-show via `enableStars()`
+	 * (cheap — texture stays bound) or `setStarsIntensity( > 0 )`.
+	 */
+	disableStars() {
+
+		if ( this._night ) this._night.disable();
+		return this;
+
+	}
+
+	setStarsIntensity( value ) {
+
+		if ( this._night ) this._night.setIntensity( value );
+		return this;
+
+	}
+
+	setStarsRotation( radians ) {
+
+		if ( this._night ) this._night.setRotation( radians );
+		return this;
+
+	}
+
+	setStarsDensity( value ) {
+
+		if ( this._night ) this._night.setDensity( value );
+		return this;
+
+	}
+
+	setStarsBrightness( value ) {
+
+		if ( this._night ) this._night.setBrightness( value );
+		return this;
+
+	}
+
+	setStarsSource( source ) {
+
+		if ( this._night ) this._night.setSource( source );
+		return this;
+
+	}
+
+	get stars() {
+
+		return this._night || null;
 
 	}
 

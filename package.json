@@ -22,6 +22,9 @@
     "src/sky/hazeScenePassDepth.js",
     "src/sky/SkyAtmosphereBaker.js",
     "src/sky/SkyAtmosphereMesh.js",
+    "src/sky/SkyGround.js",
+    "src/sky/SkyNight.js",
+    "src/sky/SkySun.js",
     "src/sky/luts",
     "src/sky/shaders",
     "README.md",
@@ -56,16 +59,23 @@
     "preview": "vite preview"
   },
   "peerDependencies": {
-    "three": ">=0.184.0",
     "@react-three/fiber": ">=10.0.0-0",
-    "react": ">=18.0.0"
+    "react": ">=18.0.0",
+    "three": ">=0.184.0"
   },
   "peerDependenciesMeta": {
-    "@react-three/fiber": { "optional": true },
-    "react": { "optional": true }
+    "@react-three/fiber": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@react-three/fiber": "^10.0.0-alpha.2",
     "camera-controls": "^3.1.2",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "three": "^0.184.0",
     "vite": "^5.4.0"
   },

@@ -160,6 +160,10 @@ export class SkyAtmosphereBaker {
 		// Y-up world-space sun vector; assigned on setSun().
 		this._sunVec = new Vector3( 0.0, 1.0, 0.0 );
 
+		// Observers fired at the end of setSun(). SkySun uses this to keep a
+		// DirectionalLight in lockstep without per-frame polling.
+		this._sunListeners = new Set();
+
 		// Camera handle, set by setCamera(). Used to refresh per-frame uniforms
 		// (viewHeight on SkyView/mesh; matrices on AP LUT).
 		this._camera = null;
@@ -298,6 +302,29 @@ export class SkyAtmosphereBaker {
 
 		this.sunDirty = true;
 		this.cubeDirty = true;
+
+		for ( const fn of this._sunListeners ) fn( this._sunVec );
+
+	}
+
+	/**
+	 * Subscribe to sun-direction changes. The listener fires after every
+	 * `setSun()` call with the current Y-up world-space sun vector (passed by
+	 * reference — clone in your callback if you need to keep a copy).
+	 *
+	 * @param {(sunVec: Vector3) => void} fn
+	 * @returns {() => void} unsubscribe function
+	 */
+	addSunListener( fn ) {
+
+		this._sunListeners.add( fn );
+		return () => this._sunListeners.delete( fn );
+
+	}
+
+	removeSunListener( fn ) {
+
+		this._sunListeners.delete( fn );
 
 	}
 

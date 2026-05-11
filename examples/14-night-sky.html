@@ -2,20 +2,25 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<title>02 — Hillaire LUT-baked sky (Phase 1b)</title>
+		<title>14 — Night sky (procedural + HDR)</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<style>
 			html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #eee; overflow: hidden; font-family: system-ui, sans-serif; }
 			#info {
 				position: absolute; top: 8px; left: 8px; padding: 6px 10px;
 				background: rgba(0,0,0,0.5); border-radius: 4px; font-size: 12px;
-				pointer-events: none; z-index: 10;
+				pointer-events: none; z-index: 10; max-width: 480px; line-height: 1.45;
 			}
 			canvas { display: block; }
 		</style>
 	</head>
 	<body>
-		<div id="info">Phase 1b — Hillaire LUT-baked sky + SkySun + reflective SkyGround</div>
+		<div id="info">
+			<b>14 — Night sky.</b> Procedural starfield by default (zero asset cost).
+			Toggle "source: hdri" in the GUI to load the demo Milky Way EXR
+			(only bundled with examples — npm consumers must provide their own).
+			Drag <b>elevation</b> below 0 to see twilight / night transitions.
+		</div>
 		<script type="module">
 			import * as THREE from 'three/webgpu';
 			import { Inspector } from 'three/addons/inspector/Inspector.js';
@@ -23,15 +28,20 @@
 
 			import { Sky } from '/src/Sky.js';
 			import { createDemoScene } from '/src/demo/createDemoScene.js';
-			import { createAtmosphereGui } from '/src/demo/sunGui.js';
 			import { createStartGate, logStage } from '/src/demo/startGate.js';
 
+			// Vite resolves this URL at request time; the EXR is fetched only when
+			// the user toggles HDR mode in the GUI. NPM consumers replace this
+			// with their own URL when calling `enableStars({ source: 'hdri', url })`.
+			const HDR_URL = new URL( './hdri/NightSkyHDRI001_1K_HDR.exr', import.meta.url ).href;
+
 			const gate = createStartGate( {
-				label: 'Start Hillaire bake',
+				label: 'Start night-sky demo',
 				stages: [
 					'create WebGPU renderer',
 					'renderer.init()',
 					'sky: LUTs + cube + PMREM (first bake)',
+					'enable procedural stars',
 					'build demo scene + ground + sun',
 					'render loop'
 				]
@@ -58,7 +68,7 @@
 
 					const s = new Sky( renderer, {
 						cubeSize: 256,
-						sunDirection: { elevation: 15, azimuth: 180 },
+						sunDirection: { elevation: -10, azimuth: 180 },
 						sunDisc: true,
 						enableAerialPerspective: false
 					} );
@@ -69,8 +79,10 @@
 				} );
 				markStage( 3, 'running' );
 
-				// Demo scene gives us camera + the showcase spheres. Drop its
-				// matte ground — SkyGround owns the floor now.
+				// Procedural stars are the default — no asset, no load wait.
+				await sky.enableStars( { intensity: 1.0 } );
+				markStage( 4, 'running' );
+
 				const demo = createDemoScene( sky.baker );
 				const scene = demo.scene;
 				const camera = demo.camera;
@@ -82,7 +94,7 @@
 
 				const ground = sky.createGround( {
 					mode: 'plane',
-					size: 50000,
+					size: 800,
 					color: 0x222222,
 					roughness: 0.4,
 					reflective: true,
@@ -105,7 +117,7 @@
 				controls.maxDistance = 40;
 				controls.update();
 
-				createAtmosphereGui( { renderer, baker: sky.baker, scene } );
+				createNightSkyGui( { renderer, sky, hdrUrl: HDR_URL } );
 
 				window.addEventListener( 'resize', () => {
 
@@ -114,7 +126,7 @@
 					renderer.setSize( window.innerWidth, window.innerHeight );
 
 				} );
-				markStage( 4, 'running' );
+				markStage( 5, 'running' );
 
 				renderer.setAnimationLoop( () => {
 
@@ -135,13 +147,60 @@
 
 				} );
 
-				// Expose for in-browser debugging via chrome-devtools-mcp.
 				window.sky = sky;
 				window.skySun = skySun;
 				window.skyGround = ground;
 				window.scene = scene;
 
 			} );
+
+			function createNightSkyGui( { renderer, sky, hdrUrl } ) {
+
+				const state = {
+					elevation: - 10,
+					azimuth: 180,
+					exposure: renderer.toneMappingExposure,
+					source: 'procedural',
+					intensity: 1.0,
+					density: 0.3,
+					brightness: 1.0,
+					rotation: 0.0
+				};
+
+				const sunGroup = renderer.inspector.createParameters( 'Sun' );
+				sunGroup.add( state, 'elevation', - 90, 90, 0.1 ).onChange( () => {
+					sky.setSunDirection( { elevation: state.elevation, azimuth: state.azimuth } );
+				} );
+				sunGroup.add( state, 'azimuth', - 180, 180, 0.1 ).onChange( () => {
+					sky.setSunDirection( { elevation: state.elevation, azimuth: state.azimuth } );
+				} );
+				sunGroup.add( state, 'exposure', 0, 1, 0.001 ).onChange( () => {
+					renderer.toneMappingExposure = state.exposure;
+				} );
+
+				const starsGroup = renderer.inspector.createParameters( 'Stars' );
+				starsGroup.add( state, 'source', [ 'procedural', 'hdri' ] ).onChange( async () => {
+
+					if ( state.source === 'hdri' && ! sky.stars?.texture ) {
+
+						// Lazy-load the HDR on first switch to HDR mode.
+						await sky.enableStars( { source: 'hdri', url: hdrUrl, intensity: state.intensity, rotation: state.rotation } );
+
+					} else {
+
+						sky.setStarsSource( state.source );
+
+					}
+
+				} );
+				starsGroup.add( state, 'intensity', 0, 4, 0.01 ).onChange( () => sky.setStarsIntensity( state.intensity ) );
+				starsGroup.add( state, 'density', 0, 1, 0.01 ).onChange( () => sky.setStarsDensity( state.density ) );
+				starsGroup.add( state, 'brightness', 0, 4, 0.01 ).onChange( () => sky.setStarsBrightness( state.brightness ) );
+				starsGroup.add( state, 'rotation', 0, Math.PI * 2, 0.01 ).onChange( () => sky.setStarsRotation( state.rotation ) );
+
+				return { state };
+
+			}
 		</script>
 	</body>
 </html>

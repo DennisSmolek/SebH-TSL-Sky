@@ -1,7 +1,12 @@
 import {
 	BackSide,
 	BoxGeometry,
+	DataTexture,
+	HalfFloatType,
+	LinearFilter,
 	Mesh,
+	RGBAFormat,
+	RepeatWrapping,
 	Vector3,
 	NodeMaterial
 } from 'three/webgpu';
@@ -9,6 +14,8 @@ import {
 import {
 	Fn,
 	If,
+	cos,
+	sin,
 	float,
 	vec2,
 	vec3,
@@ -22,6 +29,7 @@ import {
 	mix,
 	smoothstep,
 	texture,
+	equirectUV,
 	modelViewProjection,
 	positionWorld,
 	cameraPosition,
@@ -32,8 +40,28 @@ import {
 	integrateScatteredLuminance,
 	moveToTopAtmosphere,
 	raySphereIntersectNearest,
-	skyViewLutParamsToUv
+	skyViewLutParamsToUv,
+	transmittanceLutParamsToUv
 } from './shaders/atmosphere.tsl.js';
+import { proceduralStars } from './shaders/proceduralStars.tsl.js';
+
+// 1×1 black HalfFloat placeholder used when no star texture is wired. Sized to
+// match the EXR replacement format so swapping `texNode.value` later doesn't
+// trip a format-mismatch reupload.
+function _makeStarsPlaceholder() {
+
+	// Half-float "0" is the bit pattern 0x0000.
+	const data = new Uint16Array( 4 );
+	const tex = new DataTexture( data, 1, 1, RGBAFormat, HalfFloatType );
+	tex.minFilter = LinearFilter;
+	tex.magFilter = LinearFilter;
+	tex.wrapS = RepeatWrapping;
+	tex.wrapT = RepeatWrapping;
+	tex.needsUpdate = true;
+	tex.name = 'SkyAtmosphereMesh.starsPlaceholder';
+	return tex;
+
+}
 
 /**
  * Phase 1b visible sky — Hillaire LUT-sampled box mesh.
@@ -161,6 +189,66 @@ export class SkyAtmosphereMesh extends Mesh {
 		this.luminanceScale = uniform( 40.0 );
 
 		/**
+		 * Stars equirect HDR texture (HalfFloat, RGBA). Bound by
+		 * `SkyNight.enable({ source: 'hdri' | 'texture' })`; until then holds
+		 * a 1×1 black placeholder so the shader stays well-formed. Swapping
+		 * `node.value` later picks up the new texture without a material
+		 * rebuild — keep the format (HalfFloat / RGBA) consistent.
+		 *
+		 * @type {TextureNode}
+		 */
+		this._starsTexturePlaceholder = _makeStarsPlaceholder();
+		this.starsTextureNode = texture( this._starsTexturePlaceholder );
+
+		/**
+		 * Stars intensity multiplier (linear). Default 0 — keeps the stars
+		 * code path silent until `SkyNight.enable()` raises it. ~1.0 is a
+		 * good visual default for both procedural and HDR sources.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.starsIntensity = uniform( 0.0 );
+
+		/**
+		 * Stars source mode. 0 = procedural starfield (no asset cost,
+		 * shader-generated), 1 = sample `starsTextureNode` (user-provided
+		 * HDR, e.g. a Milky Way capture). Both paths run every frame; the
+		 * mix is a single lerp on the cheap procedural and a near-free
+		 * texture sample, so toggling at runtime has no recompile cost.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.starsMode = uniform( 0.0 );
+
+		/**
+		 * Procedural starfield density: fraction of the 400×200 cell grid
+		 * that hosts a star. 0.3 ≈ 24k stars over the full sphere — looks
+		 * like a clear-sky countryside. Lower for a sparse alien world,
+		 * higher for sci-fi nebula skies.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.starsDensity = uniform( 0.3 );
+
+		/**
+		 * Procedural starfield brightness multiplier. Tuned so the brightest
+		 * stars sit slightly above the dim sky scattering at night; raise for
+		 * supernova-bright look, lower for subtle.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.starsBrightnessScale = uniform( 1.0 );
+
+		/**
+		 * Stars rotation around the up axis in radians. Applies to both
+		 * procedural and HDR sources (so binding it to time-of-day rotates
+		 * either layer consistently).
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.starsRotation = uniform( 0.0 );
+
+		/**
 		 * Flag for type testing.
 		 *
 		 * @type {boolean}
@@ -209,6 +297,12 @@ export class SkyAtmosphereMesh extends Mesh {
 		const sunDiscCosU = this.sunDiscCos;
 		const luminanceScaleU = this.luminanceScale;
 		const viewHeightU = this.viewHeight;
+		const starsTexNode = this.starsTextureNode;
+		const starsIntensityU = this.starsIntensity;
+		const starsModeU = this.starsMode;
+		const starsDensityU = this.starsDensity;
+		const starsBrightnessU = this.starsBrightnessScale;
+		const starsRotationU = this.starsRotation;
 
 		return Fn( () => {
 
@@ -316,6 +410,54 @@ export class SkyAtmosphereMesh extends Mesh {
 
 			}
 
+			// Stars contribution. Two source paths run in parallel and are
+			// lerp-mixed by `starsMode` (0 = procedural shader-only, 1 = HDR
+			// texture sample). Both paths are cheap; the runtime mix lets
+			// callers swap source without a material rebuild.
+			//
+			// Whichever source produces the raw colour, we attenuate by
+			// camera→space transmittance (so stars fade through twilight
+			// without a manual fade curve) and zero out below-horizon rays.
+			//
+			// Skipped entirely if the transmittance LUT isn't wired (the
+			// stand-alone Phase 1b mesh case); without `tToSpace` stars look
+			// wrong at dawn/dusk.
+			const starsContribution = vec3( 0.0, 0.0, 0.0 ).toVar();
+			if ( transmittanceTex !== null ) {
+
+				// Rotate viewDir around the world Y axis. We use world-Y rather
+				// than the `upVec` uniform because the stars ride the world
+				// celestial sphere, not the local-up frame (relevant for
+				// spherical-planet setups where local-up tilts as the camera
+				// orbits the planet).
+				const cosR = cos( starsRotationU );
+				const sinR = sin( starsRotationU );
+				const starsDir = vec3(
+					viewDir.x.mul( cosR ).add( viewDir.z.mul( sinR ) ),
+					viewDir.y,
+					viewDir.x.mul( sinR ).negate().add( viewDir.z.mul( cosR ) )
+				);
+
+				const starsUv = equirectUV( starsDir );
+				const proceduralRaw = proceduralStars( starsUv, starsDensityU, starsBrightnessU );
+				const textureRaw = starsTexNode.sample( starsUv ).rgb;
+				const starsRaw = mix( proceduralRaw, textureRaw, starsModeU );
+
+				// Camera→space transmittance along this view ray.
+				const tToSpaceUv = transmittanceLutParamsToUv(
+					viewHeight,
+					viewZenithCosAngle,
+					params
+				);
+				const tToSpace = texture( transmittanceTex, tToSpaceUv ).rgb;
+				const skyMask = intersectsGround.select( float( 0.0 ), float( 1.0 ) );
+
+				starsContribution.assign(
+					starsRaw.mul( tToSpace ).mul( starsIntensityU ).mul( skyMask )
+				);
+
+			}
+
 			// Sun disc — same in both paths. cos(angularDiameter) smoothstep,
 			// driven by the `sunDiscCos` uniform so callers can size the disc.
 			const cosSun = dot( viewDir, sunDir );
@@ -327,7 +469,7 @@ export class SkyAtmosphereMesh extends Mesh {
 
 			const sunContribution = vec3( 1.0, 1.0, 1.0 ).mul( sunDiscMask ).mul( sunIntensityU );
 
-			return vec4( skyColor.add( sunContribution ), float( 1.0 ) );
+			return vec4( skyColor.add( starsContribution ).add( sunContribution ), float( 1.0 ) );
 
 		} )();
 
