@@ -23,6 +23,7 @@
     "src/sky/SkyAtmosphereBaker.js",
     "src/sky/SkyAtmosphereMesh.js",
     "src/sky/SkyGround.js",
+    "src/sky/SkyMoon.js",
     "src/sky/SkyNight.js",
     "src/sky/SkySun.js",
     "src/sky/luts",

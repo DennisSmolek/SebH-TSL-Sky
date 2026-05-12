@@ -416,11 +416,14 @@ export class SkyAtmosphereBaker {
 		if ( skyContentChanged ) {
 
 			const prevShowSunDisc = this.sky.showSunDisc.value;
+			const prevShowMoonDisc = this.sky.showMoonDisc.value;
 			this.sky.showSunDisc.value = 0;
+			this.sky.showMoonDisc.value = 0;
 
 			this.cubeCamera.update( this.renderer, this.skyScene );
 
 			this.sky.showSunDisc.value = prevShowSunDisc;
+			this.sky.showMoonDisc.value = prevShowMoonDisc;
 
 			// 3. PMREM. WebGPU PMREMGenerator exposes `fromCubemap( texture )` (not the
 			// WebGL-style `fromCubeRenderTarget`). It allocates a new RT each call, so

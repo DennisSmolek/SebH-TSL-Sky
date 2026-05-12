@@ -107,6 +107,14 @@
 					shadowCamera: { left: - 8, right: 8, top: 8, bottom: - 8, near: 1, far: 200 }
 				} ).attach( scene );
 
+				const skyMoon = sky.createMoon( {
+					intensity: 0.15,
+					phase: 0.5,
+					followSun: true,
+					castShadow: true,
+					shadowCamera: { left: - 8, right: 8, top: 8, bottom: - 8, near: 1, far: 200 }
+				} ).attach( scene );
+
 				demo.meshes.mirror.castShadow = true;
 				demo.meshes.pbr.castShadow = true;
 				ground.mesh.receiveShadow = true;
@@ -117,7 +125,7 @@
 				controls.maxDistance = 40;
 				controls.update();
 
-				createNightSkyGui( { renderer, sky, hdrUrl: HDR_URL } );
+				createNightSkyGui( { renderer, sky, moon: skyMoon, hdrUrl: HDR_URL } );
 
 				window.addEventListener( 'resize', () => {
 
@@ -149,12 +157,13 @@
 
 				window.sky = sky;
 				window.skySun = skySun;
+				window.skyMoon = skyMoon;
 				window.skyGround = ground;
 				window.scene = scene;
 
 			} );
 
-			function createNightSkyGui( { renderer, sky, hdrUrl } ) {
+			function createNightSkyGui( { renderer, sky, moon, hdrUrl } ) {
 
 				const state = {
 					elevation: - 10,
@@ -164,7 +173,14 @@
 					intensity: 1.0,
 					density: 0.3,
 					brightness: 1.0,
-					rotation: 0.0
+					rotation: 0.0,
+					moonIntensity: 0.15,
+					moonPhase: 0.5,
+					moonFollowSun: true,
+					moonElevation: 30,
+					moonAzimuth: 0,
+					moonShowDisc: true,
+					moonDiscIntensity: 1.0
 				};
 
 				const sunGroup = renderer.inspector.createParameters( 'Sun' );
@@ -197,6 +213,32 @@
 				starsGroup.add( state, 'density', 0, 1, 0.01 ).onChange( () => sky.setStarsDensity( state.density ) );
 				starsGroup.add( state, 'brightness', 0, 4, 0.01 ).onChange( () => sky.setStarsBrightness( state.brightness ) );
 				starsGroup.add( state, 'rotation', 0, Math.PI * 2, 0.01 ).onChange( () => sky.setStarsRotation( state.rotation ) );
+
+				const moonGroup = renderer.inspector.createParameters( 'Moon' );
+				moonGroup.add( state, 'moonIntensity', 0, 2, 0.01 ).onChange( () => moon.setIntensity( state.moonIntensity ) );
+				moonGroup.add( state, 'moonPhase', 0, 1, 0.01 ).onChange( () => moon.setPhase( state.moonPhase ) );
+				moonGroup.add( state, 'moonFollowSun' ).onChange( () => {
+
+					moon.setFollowSun( state.moonFollowSun );
+					if ( ! state.moonFollowSun ) {
+
+						moon.setDirection( { elevation: state.moonElevation, azimuth: state.moonAzimuth } );
+
+					}
+
+				} );
+				moonGroup.add( state, 'moonElevation', - 90, 90, 0.1 ).onChange( () => {
+
+					if ( ! state.moonFollowSun ) moon.setDirection( { elevation: state.moonElevation, azimuth: state.moonAzimuth } );
+
+				} );
+				moonGroup.add( state, 'moonAzimuth', - 180, 180, 0.1 ).onChange( () => {
+
+					if ( ! state.moonFollowSun ) moon.setDirection( { elevation: state.moonElevation, azimuth: state.moonAzimuth } );
+
+				} );
+				moonGroup.add( state, 'moonShowDisc' ).onChange( () => moon.setDiscVisible( state.moonShowDisc ) );
+				moonGroup.add( state, 'moonDiscIntensity', 0, 5, 0.01 ).onChange( () => moon.setDiscIntensity( state.moonDiscIntensity ) );
 
 				return { state };
 

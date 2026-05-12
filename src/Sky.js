@@ -3,6 +3,7 @@ import { uniform } from 'three/tsl';
 
 import { SkyAtmosphereBaker } from './sky/SkyAtmosphereBaker.js';
 import { SkyGround } from './sky/SkyGround.js';
+import { SkyMoon } from './sky/SkyMoon.js';
 import { SkyNight } from './sky/SkyNight.js';
 import { SkySun } from './sky/SkySun.js';
 import { mergeAtmosphereParams } from './sky/AtmosphereParams.js';
@@ -401,6 +402,18 @@ export class Sky {
 	createGround( opts ) {
 
 		return new SkyGround( this, opts );
+
+	}
+
+	/**
+	 * Convenience: build a `SkyMoon` bound to this Sky. Owns a
+	 * `THREE.DirectionalLight` representing moonlight; auto-tracks the sun
+	 * (anti-sun + lunar phase offset) by default. Does not feed the
+	 * atmosphere LUTs. Call `moon.attach(scene)`.
+	 */
+	createMoon( opts ) {
+
+		return new SkyMoon( this, opts );
 
 	}
 

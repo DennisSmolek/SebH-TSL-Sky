@@ -3,6 +3,7 @@
 // The 90% surface — most users only need these:
 export { Sky } from './Sky.js';
 export { SkySun } from './sky/SkySun.js';
+export { SkyMoon } from './sky/SkyMoon.js';
 export { SkyGround } from './sky/SkyGround.js';
 export { SkyNight } from './sky/SkyNight.js';
 export { applyHaze } from './applyHaze.js';

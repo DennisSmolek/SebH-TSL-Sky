@@ -161,6 +161,54 @@ export class SkyAtmosphereMesh extends Mesh {
 		this.sunDiscCos = uniform( Math.cos( 0.004675 ) );
 
 		/**
+		 * Moon direction in Y-up world space. Mirrors `sunDirection`. Pushed
+		 * by `SkyMoon` on every direction sync. Defaults to a placeholder
+		 * pointing up; the disc is hidden by default so this never matters
+		 * unless `showMoonDisc` is raised.
+		 *
+		 * @type {UniformNode<vec3>}
+		 */
+		this.moonDirection = uniform( new Vector3( 0.0, 1.0, 0.0 ) );
+
+		/**
+		 * Whether to render the moon disc (float 0/1). Default 0 — `SkyMoon`
+		 * flips this on at construction. The baker temporarily forces it off
+		 * during the cube bake (parallels sun-disc handling) so PMREM stays
+		 * clean.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.showMoonDisc = uniform( 0.0 );
+
+		/**
+		 * Moon-disc intensity multiplier. Tuned much lower than the sun
+		 * (~1.0 vs sun's 20.0): the real moon is ~6 orders of magnitude
+		 * dimmer than the sun, but visually we cheat to make it readable.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.moonIntensity = uniform( 1.0 );
+
+		/**
+		 * Moon-disc angular diameter in radians. Stored as `cos(diameter)`
+		 * for the smoothstep test. Default ~0.535° matches the Moon seen
+		 * from Earth (essentially identical to the Sun's angular diameter
+		 * — that's why eclipses are clean).
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.moonDiscCos = uniform( Math.cos( 0.004675 ) );
+
+		/**
+		 * Moon-disc colour. Cool-white default mimicking reflected sunlight.
+		 * Stored on the mesh so callers can tint without rebuilding the
+		 * material.
+		 *
+		 * @type {UniformNode<vec3>}
+		 */
+		this.moonColor = uniform( new Vector3( 0.85, 0.9, 1.0 ) );
+
+		/**
 		 * Camera viewHeight (km, planet-centred). Drives the SkyView LUT UV
 		 * un-map AND the ground-intersect ray origin. Defaults to ground+ε;
 		 * the baker's `setCamera()` updates this each frame for phase 2.
@@ -303,6 +351,11 @@ export class SkyAtmosphereMesh extends Mesh {
 		const starsDensityU = this.starsDensity;
 		const starsBrightnessU = this.starsBrightnessScale;
 		const starsRotationU = this.starsRotation;
+		const moonDirU = this.moonDirection;
+		const showMoonDiscU = this.showMoonDisc;
+		const moonIntensityU = this.moonIntensity;
+		const moonDiscCosU = this.moonDiscCos;
+		const moonColorU = this.moonColor;
 
 		return Fn( () => {
 
@@ -469,7 +522,24 @@ export class SkyAtmosphereMesh extends Mesh {
 
 			const sunContribution = vec3( 1.0, 1.0, 1.0 ).mul( sunDiscMask ).mul( sunIntensityU );
 
-			return vec4( skyColor.add( starsContribution ).add( sunContribution ), float( 1.0 ) );
+			// Moon disc — same shape as the sun disc, separate uniforms so the
+			// sun stays unaffected. Constantly "full" — no phase-shaded
+			// terminator (intentional v1 simplification: the disc is just a
+			// circle that tracks the moon direction).
+			const moonDir = normalize( moonDirU );
+			const cosMoon = dot( viewDir, moonDir );
+			const moonDiscMask = smoothstep(
+				moonDiscCosU,
+				moonDiscCosU.add( float( 0.00002 ) ),
+				cosMoon
+			).mul( showMoonDiscU );
+
+			const moonContribution = moonColorU.mul( moonDiscMask ).mul( moonIntensityU );
+
+			return vec4(
+				skyColor.add( starsContribution ).add( sunContribution ).add( moonContribution ),
+				float( 1.0 )
+			);
 
 		} )();
 
