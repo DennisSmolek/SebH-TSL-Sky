@@ -143,6 +143,10 @@ npx degit DennisSmolek/tsl-sky-starters/r3f my-sky-app
 Phase 1 (baked sky), Phase 2 (aerial perspective), and Phase 3 (planet-scale
 ground→orbit) are functional. Volumetric clouds and god-rays are out of scope.
 
+## Changelog
+
+- **0.1.3** — Reuse the PMREM render target across bakes so `environmentTexture` keeps stable identity. Prior versions reallocated per sun/atmosphere change, which invalidated the WebGPU TSL pipeline cache for every material referencing `scene.environment` and stalled `renderer.render()` (~150 ms per slider tick in consumer scenes with many TSL materials).
+
 ## License
 
 MIT © Dennis Smolek

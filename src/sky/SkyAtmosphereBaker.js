@@ -149,7 +149,9 @@ export class SkyAtmosphereBaker {
 		// --- PMREM ---
 		this.pmremGenerator = new PMREMGenerator( renderer );
 		this.pmremGenerator.compileCubemapShader();
-		this._pmremTarget = null; // PMREMGenerator.fromCubemap returns a new RT each call
+		// Allocated lazily on first bake; reused across subsequent bakes so
+		// `environmentTexture` keeps stable identity (see update() for why).
+		this._pmremTarget = null;
 
 		// --- dirty flags (all true on construction → first update() does a full bake) ---
 		this.sunDirty = true;
@@ -425,11 +427,22 @@ export class SkyAtmosphereBaker {
 			this.sky.showSunDisc.value = prevShowSunDisc;
 			this.sky.showMoonDisc.value = prevShowMoonDisc;
 
-			// 3. PMREM. WebGPU PMREMGenerator exposes `fromCubemap( texture )` (not the
-			// WebGL-style `fromCubeRenderTarget`). It allocates a new RT each call, so
-			// dispose the previous one first.
-			if ( this._pmremTarget ) this._pmremTarget.dispose();
-			this._pmremTarget = this.pmremGenerator.fromCubemap( this.cubeRenderTarget.texture );
+			// 3. PMREM. WebGPU PMREMGenerator exposes `fromCubemap( texture, target? )`
+			// (not the WebGL-style `fromCubeRenderTarget`). Pass our persistent
+			// target so the output texture identity stays stable across bakes —
+			// otherwise `scene.environment` gets a new texture object every tick,
+			// which invalidates the TSL pipeline cache for every material that
+			// references the environment node and stalls the next render() badly
+			// (see Changelog 0.1.3).
+			if ( this._pmremTarget === null ) {
+
+				this._pmremTarget = this.pmremGenerator.fromCubemap( this.cubeRenderTarget.texture );
+
+			} else {
+
+				this.pmremGenerator.fromCubemap( this.cubeRenderTarget.texture, this._pmremTarget );
+
+			}
 
 		}
 
