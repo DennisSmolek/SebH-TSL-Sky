@@ -76,10 +76,6 @@ export function createSunGui( { renderer, baker, scene } ) {
  *   - mieScale                — multiplier on `mieScattering`, `mieExtinction`,
  *                               and `mieAbsorption` (1/km). Kept coherent so
  *                               turning off Mie doesn't leave absorption on.
- *   - showSunDisc             — toggles the sun disc on the visible mesh
- *                               (does not re-bake — sun disc is off during bake
- *                               regardless; this only affects direct-render use
- *                               of the sky mesh, kept for future phases).
  *
  * The "scale" sliders multiply against the *EARTH* defaults, not the most
  * recent value, so moving a slider from 1→0→1 restores the original.
@@ -91,8 +87,7 @@ export function createAtmosphereGui( { renderer, baker, scene } ) {
 		azimuth: 180,
 		exposure: renderer.toneMappingExposure,
 		rayleighScale: 1.0,
-		mieScale: 1.0,
-		showSunDisc: false
+		mieScale: 1.0
 	};
 
 	function apply() {
@@ -107,15 +102,6 @@ export function createAtmosphereGui( { renderer, baker, scene } ) {
 		} );
 
 		renderer.toneMappingExposure = state.exposure;
-
-		// Reflect sun-disc toggle onto the Hillaire mesh. The baker disables this
-		// during the cube bake regardless, so leaving it on only shows up if/when
-		// the mesh is rendered directly (future phases).
-		if ( baker.sky && baker.sky.showSunDisc ) {
-
-			baker.sky.showSunDisc.value = state.showSunDisc ? 1.0 : 0.0;
-
-		}
 
 		baker.markCubeDirty();
 
@@ -134,7 +120,6 @@ export function createAtmosphereGui( { renderer, baker, scene } ) {
 	gui.add( state, 'exposure', 0, 2, 0.001 ).onChange( apply );
 	gui.add( state, 'rayleighScale', 0, 4, 0.01 ).onChange( apply );
 	gui.add( state, 'mieScale', 0, 4, 0.01 ).onChange( apply );
-	gui.add( state, 'showSunDisc' ).onChange( apply );
 
 	apply();
 

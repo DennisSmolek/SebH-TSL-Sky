@@ -2,6 +2,7 @@ import { Vector3 } from 'three/webgpu';
 import { uniform } from 'three/tsl';
 
 import { SkyAtmosphereBaker } from './sky/SkyAtmosphereBaker.js';
+import { GroundedSkybox } from './sky/GroundedSkybox.js';
 import { SkyGround } from './sky/SkyGround.js';
 import { SkyMoon } from './sky/SkyMoon.js';
 import { SkyNight } from './sky/SkyNight.js';
@@ -67,7 +68,13 @@ export class Sky {
 		turbidity,
 		groundAlbedo,
 		enableAerialPerspective = true,
-		apKmPerSlice = 8.0
+		apKmPerSlice = 8.0,
+		// Fold below-horizon cube-bake rays to above-horizon so the env's
+		// lower hemisphere is a Y-mirror of the sky instead of lit ground
+		// colour. Useful when the consumer scene has reflective floors and
+		// you want a clean sky HDRI for IBL. See `SkyAtmosphereBaker`'s
+		// constructor JSDoc.
+		mirrorBelowHorizon = false
 	} = {} ) {
 
 		const baseAtmosphere = resolvePreset( preset );
@@ -81,7 +88,8 @@ export class Sky {
 			atmosphere: merged,
 			lutResolutions,
 			enableAerialPerspective,
-			apKmPerSlice
+			apKmPerSlice,
+			mirrorBelowHorizon
 		} );
 
 		this._renderer = renderer;
@@ -296,6 +304,18 @@ export class Sky {
 
 	}
 
+	/**
+	 * Toggle Y-mirror of the sky on the cube's lower hemisphere (a clean
+	 * sky HDRI for IBL with no ground tint). Forces a cube re-bake on the
+	 * next `update()`.
+	 */
+	setMirrorBelowHorizon( flag ) {
+
+		this.baker.setMirrorBelowHorizon( flag );
+		return this;
+
+	}
+
 	setPreset( name ) {
 
 		this.baker.setAtmosphereParams( resolvePreset( name ) );
@@ -402,6 +422,18 @@ export class Sky {
 	createGround( opts ) {
 
 		return new SkyGround( this, opts );
+
+	}
+
+	/**
+	 * Convenience: build a `GroundedSkybox` bound to this Sky. The skybox
+	 * supplies a "floor" via cube-content reprojection — usually replaces an
+	 * explicit `SkyGround` plane. Add the returned mesh to your scene and
+	 * call `mesh.followCamera(camera)` each frame.
+	 */
+	createGroundedSkybox( opts ) {
+
+		return new GroundedSkybox( this.baker.texture, opts );
 
 	}
 

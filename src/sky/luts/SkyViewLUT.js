@@ -198,10 +198,15 @@ export class SkyViewLUT {
 			const clipped = moveToTopAtmosphere( worldPos, worldDir, params );
 			worldPos.assign( clipped.newPos );
 
-			// Integrate: ground=false (HLSL:625 — the sky-view LUT never adds
-			// a ground albedo term; the ground-facing texels still march but
-			// accumulate only in-scatter up to tBottom), MieRayPhase=true,
-			// MS-LUT attached.
+			// Integrate with ground=true so below-horizon texels pick up the
+			// sky-illuminated ground albedo. SebH's HLSL:625 sets this false
+			// because his consumer scenes always have explicit ground geometry
+			// that shades itself — adding it in the LUT there would double-
+			// count. Our baker's cube camera sees no ground geometry, so the
+			// lower hemisphere of the env map is black without this. In the
+			// main scene the live sky mesh's below-horizon pixels are still
+			// occluded by actual ground geometry (if any) via depth — no
+			// double-count.
 			const ss = integrateScatteredLuminance( {
 				worldPos,
 				worldDir,
@@ -210,7 +215,7 @@ export class SkyViewLUT {
 				transmittanceLUT: transmittanceTex,
 				multiScatterLUT: multiScatterTex,
 				sampleCount: SAMPLE_COUNT,
-				ground: false,
+				ground: true,
 				mieRayPhase: true
 			} );
 

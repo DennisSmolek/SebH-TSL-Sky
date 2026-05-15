@@ -72,7 +72,22 @@ export class SkyAtmosphereBaker {
 		apKmPerSlice = 8.0,
 		// Optional AP volume resolution override for diagnostics / high-cost
 		// quality tests. Default stays inside AerialPerspectiveLUT (32³).
-		apResolution = undefined
+		apResolution = undefined,
+		// When true, the cube bake folds the sky mesh's below-horizon view
+		// rays to above-horizon before the LUT sample — the lower hemisphere
+		// of `texture` and `environmentTexture` becomes a clean Y-mirror of
+		// the upper hemisphere instead of the LUT's lit-ground-albedo
+		// content. Useful when the consumer scene has reflective floors or
+		// uses `GroundedSkybox` in reflective mode, so PBR IBL doesn't pick
+		// up a coloured ground tint from below.
+		//
+		// Implementation: toggles the sky mesh's `mirrorBelowHorizon`
+		// uniform on for the cube bake only (live mesh in main scene
+		// continues to show real below-horizon LUT content). Zero extra
+		// render passes — the cube bake itself is unchanged in cost.
+		//
+		// Off by default; callers must opt in.
+		mirrorBelowHorizon = false
 	} = {} ) {
 
 		this.renderer = renderer;
@@ -145,6 +160,9 @@ export class SkyAtmosphereBaker {
 		// near/far chosen so the sky box (scaled 450000) is fully enclosed
 		this.cubeCamera = new CubeCamera( 1, 1_000_000, this.cubeRenderTarget );
 		this.skyScene.add( this.cubeCamera );
+
+		// --- mirror-below-horizon flag (toggled per bake in update()) ---
+		this._mirrorBelowHorizon = mirrorBelowHorizon;
 
 		// --- PMREM ---
 		this.pmremGenerator = new PMREMGenerator( renderer );
@@ -351,6 +369,19 @@ export class SkyAtmosphereBaker {
 	}
 
 	/**
+	 * Toggle the below-horizon Y-mirror on the cube bake. When `true`, the
+	 * next bake fills the cube's lower hemisphere with a clean Y-mirror of
+	 * the sky instead of the LUT's lit-ground-albedo content; the live sky
+	 * mesh in the main scene is unaffected. Forces a cube re-bake.
+	 */
+	setMirrorBelowHorizon( flag ) {
+
+		this._mirrorBelowHorizon = !! flag;
+		this.cubeDirty = true;
+
+	}
+
+	/**
 	 * Mode B factory — return a sky mesh that the caller can add to their main
 	 * scene as a far-plane background. Shares the underlying material and
 	 * uniforms with the baker's internal `this.sky`, so `setSun` / `setCamera`
@@ -419,13 +450,19 @@ export class SkyAtmosphereBaker {
 
 			const prevShowSunDisc = this.sky.showSunDisc.value;
 			const prevShowMoonDisc = this.sky.showMoonDisc.value;
+			const prevMirror = this.sky.mirrorBelowHorizon.value;
 			this.sky.showSunDisc.value = 0;
 			this.sky.showMoonDisc.value = 0;
+			// Opt-in: fold below-horizon view rays to above-horizon so the
+			// cube's lower hemisphere bakes a clean Y-mirror of the sky
+			// instead of the LUT's lit-ground-albedo colour.
+			this.sky.mirrorBelowHorizon.value = this._mirrorBelowHorizon ? 1.0 : 0.0;
 
 			this.cubeCamera.update( this.renderer, this.skyScene );
 
 			this.sky.showSunDisc.value = prevShowSunDisc;
 			this.sky.showMoonDisc.value = prevShowMoonDisc;
+			this.sky.mirrorBelowHorizon.value = prevMirror;
 
 			// 3. PMREM. WebGPU PMREMGenerator exposes `fromCubemap( texture, target? )`
 			// (not the WebGL-style `fromCubeRenderTarget`). Pass our persistent

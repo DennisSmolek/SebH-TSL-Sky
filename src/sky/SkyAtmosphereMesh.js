@@ -14,6 +14,7 @@ import {
 import {
 	Fn,
 	If,
+	abs,
 	cos,
 	sin,
 	float,
@@ -140,6 +141,24 @@ export class SkyAtmosphereMesh extends Mesh {
 		 * @type {UniformNode<float>}
 		 */
 		this.showSunDisc = uniform( 0.0 );
+
+		/**
+		 * Below-horizon Y-mirror (float 0/1). When 1, view rays pointing
+		 * downward (against `upVector`) get their up-component flipped to
+		 * positive before the Sky-View LUT sample. The result is a clean
+		 * Y-mirror of the sky on the lower hemisphere instead of the LUT's
+		 * `ground: true` lit-albedo content. The baker toggles this on
+		 * during the cube bake (when `mirrorBelowHorizon` is enabled at
+		 * construction) so `environmentTexture` becomes a complete sky
+		 * HDRI with no ground tint in the lower mips — handy when the
+		 * consumer scene has reflective floors or uses `GroundedSkybox` in
+		 * reflective mode and doesn't want ground colour bleeding into
+		 * PBR IBL. Live mesh in the main scene keeps this at 0 so the
+		 * direct sky view continues to show real below-horizon LUT content.
+		 *
+		 * @type {UniformNode<float>}
+		 */
+		this.mirrorBelowHorizon = uniform( 0.0 );
 
 		/**
 		 * Sun-disc intensity multiplier. Tuned to match the Sky-View LUT's
@@ -356,13 +375,27 @@ export class SkyAtmosphereMesh extends Mesh {
 		const moonIntensityU = this.moonIntensity;
 		const moonDiscCosU = this.moonDiscCos;
 		const moonColorU = this.moonColor;
+		const mirrorBelowHorizonU = this.mirrorBelowHorizon;
 
 		return Fn( () => {
 
 			// View direction from the camera to this fragment's world position.
-			const viewDir = normalize( positionWorld.sub( cameraPosition ) );
+			const viewDirRaw = normalize( positionWorld.sub( cameraPosition ) );
 			const upVec = normalize( upU );
 			const sunDir = normalize( sunDirU );
+
+			// Optional below-horizon Y-mirror. When `mirrorBelowHorizon` is 1,
+			// fold the up-axis component of viewDir to be positive (i.e.
+			// reflect downward rays about the local horizon plane). All
+			// downstream math (intersectsGround, viewZenithCosAngle, LUT
+			// sample) automatically produces above-horizon sky content for
+			// what would otherwise be ground-direction rays — giving a clean
+			// Y-mirrored sky on the cube's lower hemisphere. The horizontal
+			// component is untouched so azimuth-relative-to-sun is preserved.
+			const vAlongUp = dot( viewDirRaw, upVec );
+			const vAlongUpEffective = mix( vAlongUp, abs( vAlongUp ), mirrorBelowHorizonU );
+			const viewDirHorizontal = viewDirRaw.sub( upVec.mul( vAlongUp ) );
+			const viewDir = normalize( viewDirHorizontal.add( upVec.mul( vAlongUpEffective ) ) );
 
 			// Camera viewHeight (km, distance from planet centre) — driven by the
 			// per-frame uniform. Clamp to never fall below `bottomRadius + ε` so

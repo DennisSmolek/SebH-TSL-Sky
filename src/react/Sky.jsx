@@ -15,7 +15,7 @@ import { SkyContext } from './SkyContext.js';
  * Imperative props (applied via setters; no remount):
  *   `timeOfDay`, `latitude`, `dayOfYear`, `sunDirection`, `north`,
  *   `exposure`, `sunDisc`, `turbidity`, `groundAlbedo`, `atmosphere`,
- *   `hazeStrength`, `hazePolicy`, `hazeAltitudeBlend`
+ *   `hazeStrength`, `hazePolicy`, `hazeAltitudeBlend`, `mirrorBelowHorizon`
  *
  * Aerial-perspective haze post-process: render an `<AutoHaze />` child
  * (imported from `tsl-sky/react/auto-haze`). It calls `useRenderPipeline`
@@ -33,6 +33,7 @@ export function Sky( {
 	atmosphere,
 	enableAerialPerspective = true,
 	apKmPerSlice = 8.0,
+	mirrorBelowHorizon = false,
 	exposure = 40,
 	north = '+Z',
 	sunDisc = true,
@@ -60,6 +61,7 @@ export function Sky( {
 			atmosphere,
 			enableAerialPerspective,
 			apKmPerSlice,
+			mirrorBelowHorizon,
 			exposure,
 			north,
 			sunDisc,
@@ -146,6 +148,12 @@ export function Sky( {
 		if ( atmosphere ) sky.setAtmosphere( atmosphere );
 
 	}, [ sky, atmosphere ] );
+
+	useEffect( () => {
+
+		sky.setMirrorBelowHorizon( !! mirrorBelowHorizon );
+
+	}, [ sky, mirrorBelowHorizon ] );
 
 	useEffect( () => {
 

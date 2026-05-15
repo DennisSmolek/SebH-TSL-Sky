@@ -1,6 +1,6 @@
 {
   "name": "tsl-sky",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Production-quality Hillaire atmospheric sky for Three.js / TSL on the WebGPU renderer. Drop-in vanilla and React (R3F) entries.",
   "type": "module",
   "exports": {
@@ -23,6 +23,7 @@
     "src/sky/SkyAtmosphereBaker.js",
     "src/sky/SkyAtmosphereMesh.js",
     "src/sky/SkyGround.js",
+    "src/sky/GroundedSkybox.js",
     "src/sky/SkyMoon.js",
     "src/sky/SkyNight.js",
     "src/sky/SkySun.js",

@@ -117,13 +117,32 @@ The `Sky` class:
 | `setSunDisc(boolean \| { angularDiameter })` | Disc visibility + size in radians |
 | `setTurbidity(n)` | Mie scattering scalar (1 = Earth) |
 | `setGroundAlbedo(n \| Vector3)` | Multi-scatter LUT input |
+| `setMirrorBelowHorizon(boolean)` | Bake a Y-mirrored sky on the cube's lower hemisphere instead of lit-ground albedo (clean sky HDRI for reflective-floor scenes) |
 | `setPreset('earth' \| 'mars' \| 'titan')` | Swap atmosphere defaults |
 | `setAtmosphere(partial)` | Direct atmosphere-params override |
 | `setHazeStrength(n)` / `setHazePolicy(p)` / `setHazeAltitudeBlend({startKm, endKm})` | Live haze knobs |
 | `update(camera, { planetCenter? })` | Per-frame; planet-frame altitude when `planetCenter` is set |
 | `updateAerialPerspective()` | Per-frame; required when `applyHaze` is wired |
 | `applyHaze(sceneColorNode, options)` | Returns a `vec4` TSL output node |
+| `createSun(opts)` / `createGround(opts)` / `createGroundedSkybox(opts)` / `createMoon(opts)` | Factories for the optional helper objects |
 | `attach(scene)` / `detach()` / `dispose()` | Lifecycle |
+
+### `GroundedSkybox` (optional)
+
+A ground-projected skybox mesh — the lower hemisphere of the cube is reprojected
+onto a flat disc at world `y=0`, so the cube content acts as a "floor" without
+needing an explicit ground plane. Pass `reflective: true` for a mirror-floor /
+wet-pavement look (disc samples the cube via `reflect(viewDir, +Y)`). Pair with
+`sky.setMirrorBelowHorizon(true)` if you want PBR materials' downward IBL to
+match the visible floor.
+
+```js
+const skybox = sky.createGroundedSkybox({ height: 4, radius: 200, reflective: false });
+scene.add(skybox);
+
+// per frame, so the disc stays anchored under the camera:
+skybox.followCamera(camera);
+```
 
 ## Starters
 
@@ -145,6 +164,10 @@ ground→orbit) are functional. Volumetric clouds and god-rays are out of scope.
 
 ## Changelog
 
+- **0.1.4**
+  - **New `GroundedSkybox`.** Ground-projected skybox mesh that reprojects the cube's lower hemisphere onto a flat disc at world `y=0`. Optional `reflective` mode for wet-pavement / mirror-floor looks. Use `sky.createGroundedSkybox({ height, radius, reflective })`. See `examples/15-grounded-skybox.html` for dial-in.
+  - **New `mirrorBelowHorizon`** constructor option + `sky.setMirrorBelowHorizon(flag)` runtime setter. When enabled, the cube bake fills the lower hemisphere with a clean Y-mirror of the sky instead of the LUT's lit-ground-albedo content. Pair with reflective-floor scenes so PBR IBL doesn't pick up a coloured ground tint from below.
+  - **Sky-View LUT now bakes the ground-albedo bounce by default.** `environmentTexture`'s lower hemisphere is lit ground colour instead of black/dim, so matte materials' downward IBL picks up the ground tint correctly without needing an explicit `SkyGround` plane. Flip back to the previous behaviour any time by toggling `mirrorBelowHorizon` on (which bypasses the ground branch entirely).
 - **0.1.3** — Reuse the PMREM render target across bakes so `environmentTexture` keeps stable identity. Prior versions reallocated per sun/atmosphere change, which invalidated the WebGPU TSL pipeline cache for every material referencing `scene.environment` and stalled `renderer.render()` (~150 ms per slider tick in consumer scenes with many TSL materials).
 
 ## License

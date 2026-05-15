@@ -5,6 +5,7 @@ export { Sky } from './Sky.js';
 export { SkySun } from './sky/SkySun.js';
 export { SkyMoon } from './sky/SkyMoon.js';
 export { SkyGround } from './sky/SkyGround.js';
+export { GroundedSkybox } from './sky/GroundedSkybox.js';
 export { SkyNight } from './sky/SkyNight.js';
 export { applyHaze } from './applyHaze.js';
 export { presets, resolvePreset } from './presets.js';
