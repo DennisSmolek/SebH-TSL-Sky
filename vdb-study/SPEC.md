@@ -129,11 +129,13 @@ fixture corpus (the correctness anchor for everything hand-built here).
 | W1 (on demonstrated need) | NanoVDB-only WASM add-on: official `createNanoGrid` as correctness/perf backstop for the TS serializer (single-threaded Emscripten, ~0.5–1 MB, no COOP/COEP) | separate opt-in package |
 | v2 | same-transform grid merges (max/add/over composites) via the tree builder; basic TS `.vdb` writer (float, none/zlib), round-trip-validated in Houdini/Blender | browser-side |
 
-**Companion service (D6):** a native-OpenVDB Docker image + thin CLI/HTTP
-wrapper (server or cloud-worker deploy) for full-fidelity heavy ops:
-`.vdb` export, resample, CSG, mixed-transform merges, blosc, batch
-sequence conversion. Same image bakes the Phase 0 fixtures. This
-supersedes the former OpenVDB-WASM rung (retained on paper only).
+**Companion service (D6 — interim crutch, not a destination):** a
+native-OpenVDB Docker image + thin CLI/HTTP wrapper covering only the ops
+the browser stack can't do yet (`.vdb` export, resample, CSG, blosc,
+batch conversion). Same image bakes the Phase 0 fixtures. The project is
+browser-first: each endpoint has a named TS/WGSL successor (D6 table —
+TS `.vdb` writer, blosc-wasm codec, GPU-compute resample + TS rebuild,
+worker-based batching), and retiring endpoints is tracked roadmap work.
 
 ## 5. Demos / examples (each is a phase gate)
 

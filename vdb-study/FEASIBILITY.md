@@ -222,14 +222,16 @@ WASM rungs are adopted only on demonstrated need:
 - **W1: NanoVDB-only WASM** (header-only, single-threaded, ~0.5–1 MB, no
   COOP/COEP) — official builder as a correctness/perf backstop for the TS
   serializer.
-- **W2: OpenVDB WASM** — demoted to paper-only by D6: heavy/full-fidelity
-  ops (`.vdb` export, resample, CSG, mixed-transform merges, blosc, batch
-  conversion) go to a **native OpenVDB companion service** (Docker + thin
-  CLI/HTTP wrapper — trivial where WASM is a porting project, and the same
-  image doubles as the fixture-bake environment). Note: standalone NanoVDB
-  cannot write `.vdb` at all (its `.vdb` direction requires OpenVDB linked
-  in), so export was always full-OpenVDB territory; the TS layer keeps
-  same-transform merges and a later basic `.vdb` writer.
+- **W2: OpenVDB WASM** — paper-only. Ops the browser stack can't do yet
+  (`.vdb` export, resample, CSG, blosc, batch conversion) run interim on a
+  **native OpenVDB companion service** (Docker + thin wrapper; same image
+  as the fixture-bake environment) — but per D6 the mission is
+  browser-first: every service endpoint has a named TS/WGSL successor
+  (TS `.vdb` writer, blosc-wasm codec, GPU-compute resample → TS tree
+  rebuild), and shrinking the service to zero is tracked roadmap work, not
+  a wish. Note: standalone NanoVDB cannot write `.vdb` at all (that
+  direction requires OpenVDB linked in) — export was always full-OpenVDB
+  territory natively, which is exactly why the TS writer matters.
 
 ---
 

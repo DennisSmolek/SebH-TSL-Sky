@@ -111,11 +111,22 @@ official `nanovdb_convert` byte/value-wise on all fixtures
   native companion service instead. Revisit only if a fully-offline
   browser requirement materializes.
 
-### Phase 6b — Companion service (T2, S–M; can run any time after Phase 0)
+### Phase 6b — Companion service, interim (T2, S–M; any time after Phase 0)
 ✅ gate: Docker image + wrapped endpoints (`convert`, `export-vdb`,
 `resample`, `merge`, `batch-sequence`) exercised from the explorer demo
 - Grows out of the Phase 0 fixture-bake image (D6): same container, thin
-  CLI/HTTP wrapper. Native OpenVDB — none of the WASM constraints apply.
+  CLI/HTTP wrapper. Explicitly a **crutch** — browser-first is the mission.
+
+### Phase 9 — Browser parity: retire the crutch (future efforts, post-v1)
+Ordered by expected impact; each item deletes a service endpoint (D6):
+1. TS `.vdb` writer (float, none/zlib) — kills `export-vdb` for the common
+   case; grow fidelity until the endpoint is redundant.
+2. blosc-wasm codec plug-in for the TS parser — kills the blosc gap.
+3. GPU-compute resample (WGSL samples source grid at new transform —
+   Phase 2 machinery) → TS tree rebuild — kills `resample`/`merge` for
+   mixed transforms; general CSG rides the same path.
+4. Worker + File System Access batching — kills `batch-sequence`.
+Gate per item: the explorer demo performs the op fully offline.
 
 ### Phase 7 — Sequences (T3 design, T2 impl, M–L) ✅ gate: demo 05 — EmberGen
 sequence at 24 fps with stats HUD, no >1-frame stalls on target desktop

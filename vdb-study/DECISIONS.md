@@ -41,16 +41,25 @@ option plumbing. The mobile atlas fallback stays designed-in but untargeted.
 - `three-nanovdb` — TSL/three.js layer (grid wrapper, materials, compute utils)
 - `vdb-web-tools` — TS-first CPU tooling (parse/build/quantize/transform), with optional WASM add-ons
 
-## D6 — Companion service supersedes OpenVDB-WASM for heavy ops
-*(added review round 2)* `.vdb` file export is exclusively full-OpenVDB
-territory (standalone NanoVDB writes only `.nvdb`; its `.vdb` direction
-exists only when OpenVDB is linked in; picovdb is read-oriented). Rather
-than ever porting OpenVDB to WASM, heavy/full-fidelity operations go to a
-**native OpenVDB companion service** (Docker image + thin CLI/HTTP wrapper
-on a server or cloud worker): `.vdb` export, resample, CSG,
-mixed-transform merges, blosc, batch sequence conversion. The same image
-is the Phase 0 fixture-bake environment — one artifact, two uses. The
-browser TS layer still covers same-transform merges and (later) a basic
-`.vdb` writer; the W2 (OpenVDB-WASM) rung is retained on paper only,
-demoted to "revisit if a fully-offline browser requirement ever
-materializes."
+## D6 — Browser-first; companion service is an interim crutch to eliminate
+*(added review round 2, reframed round 3)* **The mission is these tools on
+the web.** Every operation should run in the browser; the native OpenVDB
+companion service (Docker image + thin CLI/HTTP wrapper, grown from the
+Phase 0 fixture-bake image) exists only as an **interim crutch** for the
+rare ops the browser stack can't do yet, and each of its endpoints carries
+an explicit browser-successor plan:
+
+| Server op (interim) | Browser successor (future effort) |
+|---|---|
+| `.vdb` export (full-fidelity) | TS `.vdb` writer — float/none/zlib first, validated by Houdini/Blender round-trip, fidelity grown until the server path is redundant |
+| blosc-compressed `.vdb` input | third-party blosc-wasm codec plugged into the TS parser |
+| resample / mixed-transform merge | **GPU compute resample** (WGSL sampling of the source grid at the new transform — machinery Phase 2 already builds) → TS tree rebuild |
+| CSG / composites | same-transform composites are TS v2 already; general case rides the GPU-resample path |
+| batch sequence conversion | Web Workers + File System Access API once single-file conversion is browser-native |
+
+Success criterion: the service's op list shrinks release over release;
+"needs the server" is treated as a bug with a roadmap entry, not a
+feature. Background facts unchanged: `.vdb` writing is full-OpenVDB
+territory in the native ecosystem (standalone NanoVDB writes only
+`.nvdb`; picovdb is read-oriented), and OpenVDB-WASM (W2) stays
+paper-only — the browser successors above are TS/WGSL, not Emscripten.
