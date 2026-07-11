@@ -32,7 +32,7 @@ and a technical "VDB explorer" tool.
 | Can Three.js TSL host it? | **Yes.** Read-only storage buffers work in fragment-stage node materials; raw WGSL injects via `wgslFn`; `Loop`/`struct`/compute all shipping. |
 | Can we render clouds without dense-texture tricks? | **Yes.** HDDA empty-space skipping + per-node min/max stats over the flat buffer is the canonical NanoVDB fog-volume render path, and it maps to WGSL cleanly. |
 | Can we load Houdini/EmberGen VDBs? | **Yes, in stages.** `.nvdb` (which Houdini, Blender ≥3.x, and EmberGen can all export directly) is a zero-parse upload today; in-browser `.vdb` parsing is real work with three viable routes (§6). |
-| Full native OpenVDB in WASM? | **Hard; nobody has shipped it.** Blockers are the deps (Boost, TBB, Blosc under Emscripten), not the core code. We propose a ladder that gets the same user-facing results without betting the project on it. |
+| Full native OpenVDB in WASM? | **Hard; nobody has shipped it.** Blockers are the deps (Boost, TBB, Blosc under Emscripten), not the core code. Resolved (D3): CPU path is pure TS; WASM is a targeted, optional escalation (§6). |
 | Animated VDB sequences on the web? | **Feasible on desktop, green-field.** Nothing exists to reuse; upload bandwidth math works (§8). |
 | GPU-side limits? | NanoVDB is **read-only topology** on GPU: values can be edited in compute, topology (adding/removing active voxels) requires a CPU/WASM rebuild. Fine for rendering + playback; rules out GPU-side simulation. |
 
@@ -177,29 +177,54 @@ open — this project would be near the front of it.
 
 ---
 
-## 6. The CPU/WASM half — options ladder
+## 6. The CPU half — options analysis *(updated per [DECISIONS.md](./DECISIONS.md) D3)*
 
-Stated intent: **standard/native OpenVDB as the WASM component.** Honest
-finding: full OpenVDB under Emscripten is a multi-week yak-shave nobody has
-shipped — Boost + TBB (hard requirements) + Blosc + exceptions/RTTI, with
-only a stale unofficial TBB-wasm port available; expect 5–15 MB of .wasm if
-it works at all. Rather than bet the project on it, we propose a ladder where
-each rung delivers user-visible capability and no rung blocks the GPU half:
+### Why native OpenVDB can't be "just wrapped"
 
-| Rung | What | Deps | Effort | Delivers |
+Wrapping applies to libraries that already run on the target platform. WASM
+is a different platform: Emscripten provides no system libraries, so OpenVDB
+**and its entire dependency tree** must be cross-compiled from source —
+Boost, Blosc, and TBB, a threading runtime that in the browser requires Web
+Workers + SharedArrayBuffer and therefore COOP/COEP headers on every
+deployment. It is a porting project, not a binding project; nobody has
+shipped it, and the only TBB-wasm port is stale/unofficial. Expect 5–15 MB
+of .wasm if it works at all.
+
+### What each option actually delivers
+
+The pivotal observation: **the hard part — building a valid NanoVDB tree
+from parsed voxel data — must be hand-written by us in every realistic
+option except full OpenVDB.** Given that, the options compare as:
+
+| Capability | Pure TS | vdb-rs→WASM | NanoVDB-only WASM | Full OpenVDB WASM |
 |---|---|---|---|---|
-| **L0** | No WASM: offline `nanovdb_convert`; JS `.nvdb` loader (a header parse + slice) | none | days | Cloud rendering ships against `.nvdb` assets |
-| **L1** | **NanoVDB-only WASM** (header-only C++, all deps optional, single-threaded Emscripten build, ~0.2–1 MB) | none | ~1–2 wk | In-browser grid *building* (`tools::build::Grid` + `createNanoGrid`): dense→NanoVDB, quantization, `.nvdb` read/write, stats — no OpenVDB needed (upstream `ex_make_custom_nanovdb` proves the no-dependency path) |
-| **L2** | **In-browser `.vdb` parsing** — two candidate routes, pick after a timeboxed spike: (a) `vdb-rs` → wasm32 (drop/replace blosc; write the VDB-tree→NanoVDB-layout serializer ourselves), (b) minimal OpenVDB-core Emscripten build (`openToNanoVDB` path; fight Boost/TBB) | (a) Rust toolchain (b) Emscripten + dep ports | (a) ~2–4 wk (b) unbounded/risky | Drag-drop a Houdini/EmberGen `.vdb`, render it |
-| **L3** | Full OpenVDB tools in WASM: transforms, filters, resampling, `.vdb` export | everything | large | Wishlist ops with the real library |
+| Parse `.vdb` (zlib — Blender/Houdini default) | ✅ we write it (proven viable in JS by prior art) | ✅ robust, exists | ❌ | ✅ |
+| Parse `.vdb` (blosc) | ⚠️ optional third-party blosc-wasm codec | ⚠️ C dep to replace | ❌ | ✅ |
+| `.nvdb` read/write | ✅ trivial | we'd write it | ✅ official code | ✅ |
+| Build NanoVDB grid (render Houdini VDBs) | ✅ we write serializer | ✅ we write it (Rust) | ✅ official `createNanoGrid` | ✅ |
+| Quantize Fp8/FpN | ✅ we implement | we implement | ✅ official | ✅ |
+| Affine transforms | ✅ **metadata-only** (index→world Map edit) | ✅ | ✅ | ✅ |
+| Resample / filter / CSG / topology ops | ❌ | ❌ | ❌ (values only) | ✅ |
+| Export `.vdb` | ⚠️ feasible later (none/zlib) | ❌ read-only | ❌ | ✅ |
+| Bundle / toolchain | zero wasm, zero toolchain | ~0.3 MB wasm + Rust | ~0.5–1 MB wasm + Emscripten | 5–15 MB, high build risk, COOP/COEP |
 
-Recommendation: **L0 → L1 immediately; L2 via spike (route (a) favored on
-evidence; route (b) timeboxed to one week before abandoning); L3 only if L2's
-OpenVDB route lands.** If L2(b) fails, the wishlist "transform/export" goals
-are served by L1 (NanoVDB has value transforms + `.nvdb` export) plus a
-documented offline round-trip for `.vdb` export. Note: single-threaded WASM
-builds avoid the SharedArrayBuffer/COOP/COEP deployment headache entirely;
-pthreads would force cross-origin isolation headers on every host.
+### Decision (D3): pure TypeScript first, WASM as targeted escalation
+
+The v1 CPU path is **pure TS**: `.vdb` parse (zlib; blosc optional),
+NanoVDB serialization, quantization, affine transforms, `.nvdb` I/O —
+one language across the project, browser-debuggable, zero deployment
+friction, validated byte/value-wise against official `nanovdb_convert`
+output on fixtures. At the agreed desktop-scale assets (D4), JS parse
+performance is a non-issue (prior art's memory ceiling was hit on
+cinema-scale grids only).
+
+WASM rungs are adopted only on demonstrated need:
+- **W1: NanoVDB-only WASM** (header-only, single-threaded, ~0.5–1 MB, no
+  COOP/COEP) — official builder as a correctness/perf backstop for the TS
+  serializer.
+- **W2: OpenVDB WASM** — only if resample/filter/CSG/`.vdb`-export become
+  real priorities; strictly timeboxed, never load-bearing. Until then those
+  ops are served by a documented offline round-trip.
 
 ---
 
@@ -241,23 +266,15 @@ packs** — our test corpus, alongside the CC-BY-SA Disney cloud.
 | `wgslFn` + storage-buffer pointer params have rough edges in three.js | Medium — it's the load-bearing integration | Phase-1 spike proves the exact binding pattern before anything else builds on it; fallback is authoring traversal in pure TSL nodes (more work, same output) |
 | emcfarlane port is young/single-author | Low | It's a reference, not a dependency: ~2k lines we audit line-by-line against `PNanoVDB.h` + upstream's stride-validation test, with our own unit harness |
 | Mobile (128 MiB binding, compat-mode fragment limits) | Medium | Quantized grids; brick-atlas Data3DTexture fallback via compute decode — designed in from the start, not bolted on |
-| OpenVDB-in-WASM turns into a tar pit | High if we bet on it | The §6 ladder: it's rung L2(b)/L3, timeboxed, with (a) as the favored route and L1 delivering most wishlist value regardless |
+| OpenVDB-in-WASM turns into a tar pit | High if we bet on it | Eliminated as a bet by D3: CPU path is pure TS; OpenVDB-WASM is an optional, timeboxed W2 rung |
+| TS NanoVDB serializer has correctness bugs (hand-built tree/masks/offsets) | Medium | Byte/value-level validation against official `nanovdb_convert` output on every fixture; W1 (NanoVDB-WASM official builder) as backstop if divergence resists debugging |
 | Per-pixel dependent loads (9–12 per uncached lookup) tank fragment perf on big grids | Medium | Readaccessor caching (coherent rays amortize to ~1–3 loads), HDDA skipping, node-stat adaptive steps; compute-to-atlas path as the perf escape hatch; benchmark gate in the plan |
 | picovdb license never materializes | Low | We don't depend on it; if it's licensed later, its 32-bit format is an optimization to adopt |
 | Grid > raised binding limit (multi-GB cinema assets) | Low for stated goals | Out of scope v1; Usher's brick-cache architecture is the documented v2 path |
 
-## 10. Open questions for review (decisions needed before build)
+## 10. Open questions — RESOLVED
 
-1. **Repo:** new dedicated repository (recommended — this is a standalone
-   library + demos), or a package inside an existing monorepo?
-2. **GPU traversal base:** adopt + audit `pnanovdb.wgsl` (recommended), or
-   clean-room transliterate from `PNanoVDB.h`? (Apache-2.0 is compatible
-   either way; clean-room costs ~1–2 extra weeks and buys provenance.)
-3. **L2 route:** agree to the spike-then-decide framing, or is
-   "native OpenVDB in WASM" a hard requirement worth the unbounded L2(b)
-   effort up front?
-4. **Mobile:** v1 target desktop-only with the fallback designed-in
-   (recommended), or mobile as a v1 acceptance criterion?
-5. **Naming/scope of the public package(s)** — e.g. `nanovdb-wgsl` (traversal
-   module, renderer-agnostic) + `three-nanovdb` (TSL/three.js layer) +
-   `vdb-web-tools` (WASM) as three artifacts vs one bundle.
+All five review questions were answered 2026-07-11; see
+[DECISIONS.md](./DECISIONS.md) (D1 new repo · D2 adopt + vendor-fork the
+existing WGSL port · D3 pure-TS CPU path, WASM as escalation · D4
+desktop-only, modest assets, device-first creation · D5 package names).

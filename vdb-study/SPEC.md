@@ -9,7 +9,7 @@ Three artifacts with one contract between them — *"a valid NanoVDB grid
 image in a flat u32 buffer"*:
 
 ```
-┌─────────────────────────── CPU / WASM ───────────────────────────┐
+┌──────────────── CPU (pure TS; optional WASM add-ons) ────────────┐
 │  vdb-web-tools                                                   │
 │  .vdb / .nvdb file  →  parse / build / quantize / inspect        │
 │                     →  NanoVDB grid image (ArrayBuffer)          │
@@ -26,9 +26,11 @@ fixtures. Renderer: Three.js `WebGPURenderer` (TSL). No WebGL fallback.
 
 ## 2. Package 1: `nanovdb-wgsl` — the GPU traversal core
 
-Renderer-agnostic WGSL source + a thin TS loader. Base: audit-and-extend of
-the Apache-2.0 `pnanovdb.wgsl` port, verified line-by-line against upstream
-`PNanoVDB.h` (ABI 32.x, `PNANOVDB_ADDRESS_32` mode).
+Renderer-agnostic WGSL source + a thin TS loader. Base (per D2):
+**vendored fork** of the Apache-2.0 `pnanovdb.wgsl` port (pinned commit,
+NOTICE preserved, our fixes in-tree with a diff log — prepared to diverge
+permanently), audited line-by-line against upstream `PNanoVDB.h`
+(ABI 32.x, `PNANOVDB_ADDRESS_32` mode).
 
 ### 2.1 WGSL module contents
 
@@ -96,12 +98,16 @@ directly (no 3D-texture intermediary):
 - `valueTransform(grid, fn)` — in-place value edits (topology fixed);
   demonstrates the "GPU toolset" beyond rendering.
 
-### 3.4 Renderer bootstrap helper
+### 3.4 Renderer bootstrap helper — device-first (D4)
 
-`createVolumeRenderer(opts)` → `WebGPURenderer` constructed with
-`requiredLimits` raised to `min(adapter.limits, needed(gridBytes))` +
-feature detection (`shader-f16`, `float32-filterable`) + a capability report
-object. (Three.js won't do this for us — documented trap.)
+`createVolumeRenderer(opts)` requests the adapter and **creates the
+`GPUDevice` ourselves** — `requiredLimits` raised to
+`min(adapter.limits, needed(gridBytes))`, feature detection (`shader-f16`,
+`float32-filterable`) — then constructs `WebGPURenderer({ device })` with
+the shared device (a pattern Dennis has used successfully). This sidesteps
+renderer option plumbing entirely and keeps device ownership with us.
+Returns the renderer + a capability report object. (Three.js won't raise
+limits for us — documented trap.)
 
 ### 3.5 Sequence player (wishlist, phased)
 
@@ -110,19 +116,18 @@ object. (Three.js won't do this for us — documented trap.)
 v1: desktop, uncompressed frames, hold-last-frame on stall. v2: delta/
 interpolation ideas from unreal-vdb/mgr-vanim.
 
-## 4. Package 3: `vdb-web-tools` — the WASM half
+## 4. Package 3: `vdb-web-tools` — the CPU half (pure TS first; D3)
 
-Built per the feasibility ladder (§6 there): rungs are releases.
+Pure TypeScript, worker-wrapped async API, zero wasm in the default install.
+Validated byte/value-wise against official `nanovdb_convert` output on the
+fixture corpus (the correctness anchor for everything hand-built here).
 
-| Release | Contents | API sketch |
+| Release | Contents | Notes |
 |---|---|---|
-| v0 (L0) | No WASM. Docs + scripts: `nanovdb_convert --fp8 in.vdb out.nvdb`, asset pipeline recipes for Houdini/Blender/EmberGen `.nvdb` export | — |
-| v1 (L1) | Emscripten build of NanoVDB headers, single-threaded, no exceptions: `buildFromDense(Float32Array, dims, opts)`, `quantize(grid, 'fp8'|'fpn', tol)`, `readNvdb/writeNvdb`, `inspect(grid)` (tree stats, per-level counts, memory breakdown) | ~0.2–1 MB wasm, no COOP/COEP needed |
-| v2 (L2) | In-browser `.vdb` → NanoVDB. Route decided by spike: (a) `vdb-rs`+wasm-bindgen with our VDB-tree→NanoVDB serializer, blosc replaced/feature-flagged; (b) minimal OpenVDB-core Emscripten (`openToNanoVDB`) | `parseVdb(ArrayBuffer) → grids[]` |
-| v3 (L3, conditional) | OpenVDB tool ops: resample, filter, CSG, transform-with-rebuild, `.vdb` export | only if v2 took route (b) or (a) matured |
-
-All builds ship as ESM + `.wasm` with a worker-wrapped async API
-(`await VdbTools.load()`), zero SharedArrayBuffer requirements through v2(a).
+| v0 | Docs + scripts only: `nanovdb_convert --fp8 in.vdb out.nvdb` recipes; Houdini/Blender/EmberGen direct-`.nvdb`-export guides | ships with Phase 0 |
+| v1 | **TS `.vdb` parser** (container, grid descriptors, tree, metadata; zlib via fflate; half-float; blosc via optional pluggable codec) + **TS NanoVDB serializer** (`buildFromVdb`, `buildFromDense`) + `quantize(grid,'fp8'\|'fpn',tol)` + `transform(grid, matrix)` (affine = metadata-only Map edit) + `inspect(grid)` (tree stats, per-level counts, memory breakdown) + `readNvdb/writeNvdb` | one language across the project; browser-debuggable |
+| W1 (on demonstrated need) | NanoVDB-only WASM add-on: official `createNanoGrid` as correctness/perf backstop for the TS serializer (single-threaded Emscripten, ~0.5–1 MB, no COOP/COEP) | separate opt-in package |
+| W2 (conditional, timeboxed) | OpenVDB WASM: resample/filter/CSG/`.vdb` export | only if those ops become priorities; never load-bearing |
 
 ## 5. Demos / examples (each is a phase gate)
 
@@ -133,8 +138,8 @@ All builds ship as ESM + `.wasm` with a worker-wrapped async API
 | 03 | `gpu-read` — minimal annotated "read VDBs on the GPU" example (one file, heavily commented) | **main goal (educational)** |
 | 04 | `atlas-fallback` — same cloud through compute→Data3DTexture→`VolumeNodeMaterial` | mobile/compat path |
 | 05 | `embergen-sequence` — animated smoke playback with stats HUD | wishlist: animation |
-| 06 | `explorer` — drag-drop `.nvdb`/`.vdb`(v2): metadata panel, node-bbox wireframes per level, slice view, histogram, memory breakdown | wishlist: technical tool |
-| 07 | `builder` — author a grid in-browser (procedural dense → WASM build → render) | WASM v1 round-trip |
+| 06 | `explorer` — drag-drop `.nvdb`/`.vdb`: metadata panel, node-bbox wireframes per level, slice view, histogram, memory breakdown | wishlist: technical tool |
+| 07 | `builder` — author a grid in-browser (procedural dense → TS build → render) | vdb-web-tools v1 round-trip |
 
 ## 6. Test strategy
 

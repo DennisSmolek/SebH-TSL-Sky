@@ -90,20 +90,26 @@ boundary, all fixtures, Float+Fp8+FpN) + trilinear samples match CPU sidecars
 utility validated against sidecars
 - `decodeToAtlas`, `gridStats`, `valueTransform`.
 
-### Phase 5 — WASM v1: NanoVDB-only (T2 build wiring, T3 API review, M–L)
-✅ gate: demo 07 — in-browser dense→grid→render round-trip; node round-trip
-tests green; wasm ≤ ~1 MB; no COOP/COEP
-- Emscripten single-threaded build, worker-wrapped ESM API
-  (`buildFromDense`, `quantize`, `readNvdb/writeNvdb`, `inspect`).
+### Phase 5 — CPU tools v1: pure TS (T3 serializer design, T2 impl, L)
+✅ gate: drag-drop a Houdini/EmberGen `.vdb` and render it (demo 06 core) +
+demo 07 dense→TS-build→render round-trip; TS serializer output matches
+official `nanovdb_convert` byte/value-wise on all fixtures
+- `.vdb` parser (zlib via fflate, half-float; blosc as optional pluggable
+  codec), NanoVDB serializer (`buildFromVdb`/`buildFromDense`), Fp8/FpN
+  quantization, affine `transform` (Map metadata edit), `inspect`,
+  `writeNvdb`. Worker-wrapped API. Per D3 — no wasm, no toolchain.
+- The serializer's topology/mask/offset math is the risky bit: T3 writes it
+  against the extracted stride tables; a T2 verification agent owns the
+  `nanovdb_convert`-parity suite.
 
-### Phase 6 — `.vdb` in the browser: spike then build (T3 spike, then route-
-dependent tier, L) ✅ gate: demo 06 upgrade — drag-drop a Houdini/EmberGen
-`.vdb` and render it
-- Week-boxed parallel spike (two T3 agents): (a) `vdb-rs`→wasm32 + NanoVDB
-  serializer PoC; (b) minimal OpenVDB-core Emscripten attempt. Decision memo
-  → handoff; route (a) presumed winner per feasibility §6, (b) promoted only
-  if it lands inside the box.
-- Implementation on the chosen route (T2/T3 mix).
+### Phase 6 — WASM escalation (CONDITIONAL — only on demonstrated need)
+- **W1** (NanoVDB-only wasm, M): triggered only if Phase 5's serializer
+  hits a correctness wall or a real perf ceiling — official
+  `createNanoGrid` as backstop. Single-threaded Emscripten, ≤ ~1 MB, no
+  COOP/COEP; ships as an opt-in add-on package.
+- **W2** (OpenVDB wasm, timeboxed L): triggered only if resample/filter/
+  CSG/`.vdb`-export get prioritized. One-week box → decision memo →
+  proceed/abandon. Never load-bearing (D3).
 
 ### Phase 7 — Sequences (T3 design, T2 impl, M–L) ✅ gate: demo 05 — EmberGen
 sequence at 24 fps with stats HUD, no >1-frame stalls on target desktop
@@ -119,20 +125,24 @@ site; README quickstarts; npm publish dry-run
 
 - Phases 0–3 are the critical path to both main goals; 4–8 are
   independent-ish and parallelizable across agents once Phase 3's handoff
-  exists (5 and 6 don't touch the GPU packages at all).
-- Wishlist "transform VDBs / export as vdb": value transforms arrive free in
-  Phase 4 (GPU) and Phase 5 (`writeNvdb`); full `.vdb` export + topology
-  transforms ride Phase 6's route decision (feasibility ladder L3).
+  exists (5 doesn't touch the GPU packages at all).
+- Wishlist "transform VDBs / export as vdb": affine transforms are
+  metadata-only and arrive in Phase 5 alongside `writeNvdb` (plus GPU value
+  edits in Phase 4); topology-changing ops and `.vdb` export ride the
+  conditional W2 rung (feasibility §6).
 - Every phase's gate is machine-checkable (tests/perf/SSIM), so gate reviews
   are cheap T2 verification runs, with T3 review reserved for phases 2, 3,
   and 6.
 
 ## 3. Immediate next actions on approval
 
-1. Resolve open questions (feasibility §10): repo, traversal base, L2
-   framing, mobile posture, package naming.
+All review questions are resolved ([DECISIONS.md](./DECISIONS.md)). Next:
+
+1. Create the new dedicated repository (D1) and add it to the working
+   session; migrate `vdb-study/` there as the founding docs.
 2. Phase 0 kickoff: scaffold + fixture pipeline (needs a machine with native
    OpenVDB/NanoVDB tools for the one-time fixture bake — or a small Docker
-   image so it's reproducible).
+   image so it's reproducible). Includes vendoring the `pnanovdb.wgsl` fork
+   (D2).
 3. File the picovdb license question upstream (zero-cost, potential future
    win).

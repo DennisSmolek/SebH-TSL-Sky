@@ -11,6 +11,7 @@ I/O and grid operations.
 
 | Doc | Contents |
 |---|---|
+| [DECISIONS.md](./DECISIONS.md) | Resolved review decisions (repo, WGSL base, TS-first CPU path, targets, names) |
 | [FEASIBILITY.md](./FEASIBILITY.md) | Research findings, prior art, platform constraints, verdict, risks |
 | [SPEC.md](./SPEC.md) | What we will build: architecture, components, formats, APIs |
 | [PLAN.md](./PLAN.md) | Phased build plan with sub-agent (Haiku/Sonnet/Opus) assignments and token/compaction strategy |
