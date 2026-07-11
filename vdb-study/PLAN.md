@@ -107,9 +107,15 @@ official `nanovdb_convert` byte/value-wise on all fixtures
   hits a correctness wall or a real perf ceiling — official
   `createNanoGrid` as backstop. Single-threaded Emscripten, ≤ ~1 MB, no
   COOP/COEP; ships as an opt-in add-on package.
-- **W2** (OpenVDB wasm, timeboxed L): triggered only if resample/filter/
-  CSG/`.vdb`-export get prioritized. One-week box → decision memo →
-  proceed/abandon. Never load-bearing (D3).
+- **W2** (OpenVDB wasm): demoted to paper-only by D6 — heavy ops go to the
+  native companion service instead. Revisit only if a fully-offline
+  browser requirement materializes.
+
+### Phase 6b — Companion service (T2, S–M; can run any time after Phase 0)
+✅ gate: Docker image + wrapped endpoints (`convert`, `export-vdb`,
+`resample`, `merge`, `batch-sequence`) exercised from the explorer demo
+- Grows out of the Phase 0 fixture-bake image (D6): same container, thin
+  CLI/HTTP wrapper. Native OpenVDB — none of the WASM constraints apply.
 
 ### Phase 7 — Sequences (T3 design, T2 impl, M–L) ✅ gate: demo 05 — EmberGen
 sequence at 24 fps with stats HUD, no >1-frame stalls on target desktop

@@ -127,7 +127,13 @@ fixture corpus (the correctness anchor for everything hand-built here).
 | v0 | Docs + scripts only: `nanovdb_convert --fp8 in.vdb out.nvdb` recipes; Houdini/Blender/EmberGen direct-`.nvdb`-export guides | ships with Phase 0 |
 | v1 | **TS `.vdb` parser** (container, grid descriptors, tree, metadata; zlib via fflate; half-float; blosc via optional pluggable codec) + **TS NanoVDB serializer** (`buildFromVdb`, `buildFromDense`) + `quantize(grid,'fp8'\|'fpn',tol)` + `transform(grid, matrix)` (affine = metadata-only Map edit) + `inspect(grid)` (tree stats, per-level counts, memory breakdown) + `readNvdb/writeNvdb` | one language across the project; browser-debuggable |
 | W1 (on demonstrated need) | NanoVDB-only WASM add-on: official `createNanoGrid` as correctness/perf backstop for the TS serializer (single-threaded Emscripten, ~0.5–1 MB, no COOP/COEP) | separate opt-in package |
-| W2 (conditional, timeboxed) | OpenVDB WASM: resample/filter/CSG/`.vdb` export | only if those ops become priorities; never load-bearing |
+| v2 | same-transform grid merges (max/add/over composites) via the tree builder; basic TS `.vdb` writer (float, none/zlib), round-trip-validated in Houdini/Blender | browser-side |
+
+**Companion service (D6):** a native-OpenVDB Docker image + thin CLI/HTTP
+wrapper (server or cloud-worker deploy) for full-fidelity heavy ops:
+`.vdb` export, resample, CSG, mixed-transform merges, blosc, batch
+sequence conversion. Same image bakes the Phase 0 fixtures. This
+supersedes the former OpenVDB-WASM rung (retained on paper only).
 
 ## 5. Demos / examples (each is a phase gate)
 

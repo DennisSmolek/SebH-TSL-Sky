@@ -40,3 +40,17 @@ option plumbing. The mobile atlas fallback stays designed-in but untargeted.
 - `nanovdb-wgsl` — renderer-agnostic WGSL traversal module + TS `.nvdb` loader
 - `three-nanovdb` — TSL/three.js layer (grid wrapper, materials, compute utils)
 - `vdb-web-tools` — TS-first CPU tooling (parse/build/quantize/transform), with optional WASM add-ons
+
+## D6 — Companion service supersedes OpenVDB-WASM for heavy ops
+*(added review round 2)* `.vdb` file export is exclusively full-OpenVDB
+territory (standalone NanoVDB writes only `.nvdb`; its `.vdb` direction
+exists only when OpenVDB is linked in; picovdb is read-oriented). Rather
+than ever porting OpenVDB to WASM, heavy/full-fidelity operations go to a
+**native OpenVDB companion service** (Docker image + thin CLI/HTTP wrapper
+on a server or cloud worker): `.vdb` export, resample, CSG,
+mixed-transform merges, blosc, batch sequence conversion. The same image
+is the Phase 0 fixture-bake environment — one artifact, two uses. The
+browser TS layer still covers same-transform merges and (later) a basic
+`.vdb` writer; the W2 (OpenVDB-WASM) rung is retained on paper only,
+demoted to "revisit if a fully-offline browser requirement ever
+materializes."
