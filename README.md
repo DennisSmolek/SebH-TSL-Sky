@@ -1,5 +1,7 @@
 # tsl-sky
 
+# This project now lives on within [Poimandres Sky Repo](https://github.com/pmndrs/sky)
+
 Production-quality atmospheric sky for Three.js / TSL on the WebGPU renderer.
 Port of Sébastien Hillaire's [_A Scalable and Production Ready Sky and
 Atmosphere Rendering Technique_](https://sebh.github.io/publications/egsr2020.pdf)
